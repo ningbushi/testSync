@@ -14,7 +14,8 @@ public final class SyncQueue {
             PendingChange existing = changes.get(change.relativePath());
             if (existing == null) {
                 changes.put(change.relativePath(), change);
-            } else {
+            } else if (existing.kind() != change.kind()
+                    || existing.modifiedAt() != change.modifiedAt()) {
                 existing.update(change.kind(), change.modifiedAt());
             }
         }
