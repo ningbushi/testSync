@@ -38,7 +38,7 @@ try {
     }
     $commonArguments = @(
         "--name", "SyncPlugins",
-        "--app-version", "1.2.6",
+        "--app-version", "1.2.7",
         "--vendor", "SyncPlugins",
         "--description", "Automatic GitHub synchronization for a Git worktree",
         "--input", $inputDirectory,
@@ -59,6 +59,7 @@ try {
     } else {
         & $jpackage "--type" "exe" `
             "--win-per-user-install" `
+            "--win-dir-chooser" `
             "--win-shortcut" `
             "--win-menu" `
             "--win-menu-group" "SyncPlugins" @commonArguments
