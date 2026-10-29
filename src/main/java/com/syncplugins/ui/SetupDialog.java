@@ -60,6 +60,7 @@ public final class SetupDialog extends JDialog {
     private final KnownHostsStore knownHosts;
     private final InputMemory memory;
     private final JComboBox<String> repositoryField = editableCombo();
+    private final javax.swing.JTextField taskNameField = new javax.swing.JTextField();
     private final JComboBox<String> remoteField = editableCombo();
     private final JComboBox<String> branchField = editableCombo();
     private final JComboBox<String> keyField = editableCombo();
@@ -77,6 +78,7 @@ public final class SetupDialog extends JDialog {
     private final Timer draftTimer;
     private boolean loading = true;
     private SetupResult result;
+    private String originalTaskId = "";
 
     public SetupDialog(java.awt.Frame owner, AppConfig existing, InputMemoryStore memoryStore,
                        SecretStore secretStore, KnownHostsStore knownHosts,
@@ -133,6 +135,8 @@ public final class SetupDialog extends JDialog {
         form.setBorder(BorderFactory.createEmptyBorder(6, 24, 10, 24));
         int row = 0;
         row = addSection(form, row, "工作区");
+        row = addTextRow(form, row, "任务名称", taskNameField,
+                "用于区分多个本地文件夹");
         row = addComboRow(form, row, "本地目录 / 下载位置", repositoryField,
                 "不存在的路径会自动创建", this::chooseRepository);
         row = addComboRow(form, row, "GitHub SSH 地址", remoteField,
@@ -198,6 +202,8 @@ public final class SetupDialog extends JDialog {
                 : existing == null || !existing.isComplete()
                 ? mergeDraft(SetupDraft.from(existing), memory.draft)
                 : SetupDraft.from(existing);
+        originalTaskId = draft.taskId == null ? "" : draft.taskId;
+        taskNameField.setText(draft.taskName == null ? "" : draft.taskName);
         setValues(repositoryField, memory.repositoryPaths, draft.repositoryPath);
         setValues(remoteField, memory.remoteUrls, draft.remoteUrl);
         setValues(branchField, memory.branches, draft.branch);
@@ -214,6 +220,8 @@ public final class SetupDialog extends JDialog {
             return existing;
         }
         if (existing.repositoryPath.isBlank()) existing.repositoryPath = remembered.repositoryPath;
+        if (existing.taskId.isBlank()) existing.taskId = remembered.taskId;
+        if (existing.taskName.isBlank()) existing.taskName = remembered.taskName;
         if (existing.remoteUrl.isBlank()) existing.remoteUrl = remembered.remoteUrl;
         if (existing.branch.isBlank()) existing.branch = remembered.branch;
         if (existing.privateKeyPath.isBlank()) existing.privateKeyPath = remembered.privateKeyPath;
@@ -469,6 +477,9 @@ public final class SetupDialog extends JDialog {
             throw new IllegalArgumentException("提交邮箱格式不正确");
         }
         AppConfig config = new AppConfig();
+        config.taskId = originalTaskId;
+        config.taskName = taskNameField.getText().trim().isBlank()
+                ? defaultTaskName(local) : taskNameField.getText().trim();
         config.repositoryPath = local.toString();
         config.remoteUrl = remote;
         config.branch = value(branchField).isBlank() ? "main" : value(branchField).trim();
@@ -522,6 +533,8 @@ public final class SetupDialog extends JDialog {
 
     private SetupDraft draftFromFields() {
         SetupDraft draft = new SetupDraft();
+        draft.taskId = originalTaskId;
+        draft.taskName = taskNameField.getText().trim();
         draft.repositoryPath = value(repositoryField).trim();
         draft.remoteUrl = value(remoteField).trim();
         draft.branch = value(branchField).trim();
@@ -722,5 +735,10 @@ public final class SetupDialog extends JDialog {
 
     private static String escapeHtml(String value) {
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private static String defaultTaskName(Path path) {
+        Path fileName = path.getFileName();
+        return fileName == null ? "同步任务" : fileName.toString();
     }
 }
