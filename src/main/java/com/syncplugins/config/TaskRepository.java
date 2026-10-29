@@ -64,6 +64,7 @@ public final class TaskRepository {
         }
         rejectDuplicateLocalFolder(config);
         new ConfigStore(configFile(config.taskId)).save(config);
+        Files.writeString(tasksDirectory.resolve(".migrated"), "1");
     }
 
     public synchronized void delete(String taskId) throws IOException {
@@ -88,8 +89,13 @@ public final class TaskRepository {
     }
 
     private void migrateLegacyIfNeeded() throws IOException {
+        Path marker = tasksDirectory.resolve(".migrated");
+        if (Files.isRegularFile(marker)) {
+            return;
+        }
         try (Stream<Path> files = Files.list(tasksDirectory)) {
             if (files.anyMatch(path -> path.getFileName().toString().endsWith(".json"))) {
+                Files.writeString(marker, "1");
                 return;
             }
         }
