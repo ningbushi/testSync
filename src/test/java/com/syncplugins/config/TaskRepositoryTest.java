@@ -60,6 +60,22 @@ class TaskRepositoryTest {
                 .hasMessageContaining("已被任务");
     }
 
+    @Test
+    void persistsPerTaskScanIntervalAndMode() throws Exception {
+        TaskRepository repository = new TaskRepository(
+                temp.resolve("interval-tasks"), temp.resolve("none.json"));
+        AppConfig config = valid("interval", "W:\\interval");
+        config.pollIntervalSeconds = 777;
+        config.syncMode = SyncMode.REALTIME;
+
+        AppConfig saved = repository.saveNew(config);
+        AppConfig loaded = repository.loadAll().get(0);
+
+        assertThat(saved.taskId).isEqualTo(loaded.taskId);
+        assertThat(loaded.pollIntervalSeconds).isEqualTo(777);
+        assertThat(loaded.syncMode).isEqualTo(SyncMode.REALTIME);
+    }
+
     private static AppConfig valid(String name, String path) {
         AppConfig config = new AppConfig();
         config.taskName = name;
