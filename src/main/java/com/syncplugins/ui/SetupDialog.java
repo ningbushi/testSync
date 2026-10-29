@@ -198,15 +198,7 @@ public final class SetupDialog extends JDialog {
     }
 
     private void populate(AppConfig existing, InputMemory memory) {
-        boolean editingExistingTask = existing != null && existing.isComplete()
-                && existing.taskId != null && !existing.taskId.isBlank();
-        SetupDraft draft = editingExistingTask
-                ? SetupDraft.from(existing)
-                : memory.draftPending
-                ? memory.draft
-                : existing == null || !existing.isComplete()
-                ? mergeDraft(SetupDraft.from(existing), memory.draft)
-                : SetupDraft.from(existing);
+        SetupDraft draft = draftForSetup(existing, memory);
         originalTaskId = draft.taskId == null ? "" : draft.taskId;
         taskNameField.setText(draft.taskName == null ? "" : draft.taskName);
         setValues(repositoryField, memory.repositoryPaths, draft.repositoryPath);
@@ -218,6 +210,23 @@ public final class SetupDialog extends JDialog {
         autoStartBox.setSelected(draft.autoStart);
         minimizedBox.setSelected(draft.startMinimized);
         pollIntervalSpinner.setValue(Math.max(1, Math.min(3_600, draft.pollIntervalSeconds)));
+    }
+
+    static SetupDraft draftForSetup(AppConfig existing, InputMemory memory) {
+        boolean editingExistingTask = existing != null && existing.isComplete()
+                && existing.taskId != null && !existing.taskId.isBlank();
+        SetupDraft draft = editingExistingTask
+                ? SetupDraft.from(existing)
+                : memory.draftPending
+                ? memory.draft
+                : existing == null || !existing.isComplete()
+                ? mergeDraft(SetupDraft.from(existing), memory.draft)
+                : SetupDraft.from(existing);
+        if (!editingExistingTask) {
+            draft.taskId = "";
+            draft.taskName = "";
+        }
+        return draft;
     }
 
     private static SetupDraft mergeDraft(SetupDraft existing, SetupDraft remembered) {
