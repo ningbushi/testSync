@@ -1,10 +1,10 @@
 # SyncPlugins
 
-SyncPlugins 是一个面向 Windows 10/11 的 GitHub 文件自动同步工具。它监听本地目录，将新增、修改、重命名和删除按修改时间逐文件提交并推送到 GitHub，也支持从 GitHub 自动初始化或手动下载。
+SyncPlugins 是一个面向 Windows 10/11 的 GitHub 文件自动同步工具。它可以同时监听多个本地目录，将每个任务中的新增、修改、重命名和删除按修改时间逐文件提交并推送到各自指定的 GitHub 仓库或分支，也支持从 GitHub 自动初始化或手动下载。
 
 发布的 Windows 安装包内置精简 Java 21 运行时。终端用户不需要单独安装 Java、Git 或 OpenSSH。
 
-当前版本：**1.1.4**
+当前版本：**1.2.0**
 
 ## 主要功能
 
@@ -15,6 +15,16 @@ SyncPlugins 是一个面向 Windows 10/11 的 GitHub 文件自动同步工具。
 - 支持空目录：远端有内容时自动克隆。
 - 支持尚不存在的下载路径：自动创建目录并克隆。
 - 不允许在另一个 Git 仓库内部创建嵌套仓库。
+
+### 多任务监听
+
+- 可同时添加多个同步任务。
+- 每个任务独立配置本地目录、GitHub 仓库、分支、私钥、提交身份和检查间隔。
+- 本地目录 A、B 可以对应不同仓库，也可以对应同一仓库的不同分支。
+- 每个任务拥有独立文件监听器、远端状态、逐文件队列、日志和下载备份。
+- 主窗口可在任务间切换，并分别执行同步、暂停、恢复、下载和备份操作。
+- “全部同步”和“全部暂停”可一次操作所有任务。
+- 不允许两个任务配置相同的本地目录。
 
 ### 本地与云端都有内容
 
@@ -86,6 +96,7 @@ SyncPlugins auto-sync: delete old.txt
 ### 同步状态与日志
 
 - 主窗口展示监听状态、仓库、分支、最后成功时间、队列、失败项、错误原因和操作记录。
+- 顶部任务选择器显示所有任务及当前状态；进度条和详情区显示选中任务。
 - 系统托盘使用 Swing 自定义菜单，使用中文字体，避免原生 AWT 菜单乱码。
 - 托盘菜单提供打开主窗口、立即同步、暂停/恢复、云端下载、备份管理、打开仓库和退出。
 - 单实例运行，防止同时启动多个同步进程。
@@ -102,8 +113,8 @@ SyncPlugins auto-sync: delete old.txt
 ## 首次使用
 
 1. 将 OpenSSH 公钥添加到 GitHub 账户。
-2. 安装并启动 SyncPlugins。
-3. 选择已有仓库、普通目录，或填写一个尚不存在的下载位置。
+2. 安装并启动 SyncPlugins。首次启动会引导创建第一个同步任务。
+3. 填写任务名称，选择已有仓库、普通目录，或填写一个尚不存在的下载位置。
 4. 填写 GitHub SSH 地址，例如：
 
 ```text
@@ -117,6 +128,7 @@ git@github.com:owner/repository.git
 9. 点击“检测并连接”。
 10. 首次 SSH 连接时，将应用显示的主机密钥 SHA-256 指纹与 GitHub 官方指纹核验后确认。
 11. 点击“保存并开始同步”。
+12. 在“任务管理”中点击“新增任务”，重复上述步骤即可添加文件夹 B。
 
 首次保存后，现有未提交文件会按队列逐文件提交并推送。文件事件仍会实时触发；检查间隔用于补充扫描和后台云端更新检查。
 
@@ -131,13 +143,14 @@ git@github.com:owner/repository.git
 - 立即同步
 - 暂停 / 恢复
 
-关闭主窗口会缩到系统托盘。右键托盘图标可执行相同的主要操作。
+关闭主窗口会缩到系统托盘。右键托盘图标可以同步所有任务、暂停所有任务、下载当前选中任务或打开任务管理。
 
 ## 数据位置
 
 ### Roaming
 
 - 配置：`%APPDATA%\SyncPlugins\config.json`
+- 多任务配置：`%APPDATA%\SyncPlugins\tasks\<任务ID>.json`
 - 输入历史和草稿：`%APPDATA%\SyncPlugins\ui-state.json`
 - SSH 主机密钥：`%APPDATA%\SyncPlugins\known_hosts`
 - DPAPI 加密口令：`%APPDATA%\SyncPlugins\secret.bin`
@@ -145,12 +158,13 @@ git@github.com:owner/repository.git
 ### Local
 
 - 运行状态：`%LOCALAPPDATA%\SyncPluginsData\state.json`
+- 多任务状态：`%LOCALAPPDATA%\SyncPluginsData\states\<任务ID>.json`
 - 日志：`%LOCALAPPDATA%\SyncPluginsData\syncplugins.log.0`
 - 日志轮转：`syncplugins.log.1`、`syncplugins.log.2`
-- 下载前备份：`%LOCALAPPDATA%\SyncPluginsData\backups`
+- 下载前备份：`%LOCALAPPDATA%\SyncPluginsData\backups\<任务ID>`
 - 单实例锁：`%LOCALAPPDATA%\SyncPluginsData\instance.lock`
 
-应用升级不会清理 `SyncPluginsData`。旧版本位于安装目录中的运行状态、日志和备份会在首次启动 1.1.x 时自动迁移。
+应用升级不会清理 `SyncPluginsData`。旧版单任务配置会迁移为 `tasks` 目录中的首个任务，旧状态和备份也会迁移到该任务。
 
 私钥本体不会被复制或上传。请勿将私钥放在被监听的仓库目录中。
 
@@ -205,6 +219,7 @@ mvn verify
 测试使用临时裸仓库模拟 GitHub，不访问真实网络。覆盖：
 
 - 已有仓库、普通目录、自动建仓和自动克隆。
+- 多个独立任务同时监听并分别推送到不同仓库。
 - 本地与云端冲突的三种初始化处理方式。
 - 新分支创建和首次远端推送。
 - 多文件逐文件提交、修改时间排序、删除和重复修改合并。
@@ -251,7 +266,7 @@ dist\SyncPlugins
 输出：
 
 ```text
-dist\SyncPlugins-1.1.4.exe
+dist\SyncPlugins-1.2.0.exe
 ```
 
 生成 EXE 需要构建机安装 WiX Toolset 3.14 或更高版本。也可以指定 WiX 工具目录：
@@ -264,7 +279,7 @@ dist\SyncPlugins-1.1.4.exe
 
 ## 当前限制
 
-- 一个应用实例对应一个工作区、一个 GitHub 仓库和一个分支。
+- 每个任务对应一个工作区、一个 GitHub 仓库和一个分支；一个应用实例可包含多个任务。
 - 仅支持 `github.com` 的 SSH 远端，不支持 HTTPS/PAT 或 GitHub Enterprise。
 - 不支持 Git LFS、子模块自动同步、自动冲突合并或强制推送。
 - 不自动创建 GitHub 仓库，仓库必须先存在。
@@ -306,4 +321,4 @@ dist\SyncPlugins-1.1.4.exe
 
 ### 托盘菜单显示异常
 
-1.1.4 已使用 Swing 自定义菜单，不再使用 AWT 原生菜单。如果仍显示异常，请确认运行版本为 1.1.4，并提供 `syncplugins.log.0`。
+1.1.4 起已使用 Swing 自定义菜单，不再使用 AWT 原生菜单。如果仍显示异常，请确认运行版本为 1.2.0，并提供 `syncplugins.log.0`。
