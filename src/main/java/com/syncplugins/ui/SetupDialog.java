@@ -323,7 +323,7 @@ public final class SetupDialog extends JDialog {
             showError(exception.getMessage());
             return;
         }
-        if (isMetadataOnlyEdit(candidate)) {
+        if (sameWorkspaceBinding(editingConfig, candidate)) {
             finishSave(candidate);
             return;
         }
@@ -343,12 +343,12 @@ public final class SetupDialog extends JDialog {
         });
     }
 
-    private boolean isMetadataOnlyEdit(AppConfig candidate) {
-        return editingConfig != null
-                && editingConfig.repositoryPath.equals(candidate.repositoryPath)
-                && editingConfig.remoteUrl.equals(candidate.remoteUrl)
-                && editingConfig.branch.equals(candidate.branch)
-                && editingConfig.privateKeyPath.equals(candidate.privateKeyPath);
+    static boolean sameWorkspaceBinding(AppConfig existing, AppConfig candidate) {
+        return existing != null
+                && existing.repositoryPath.equals(candidate.repositoryPath)
+                && existing.remoteUrl.equals(candidate.remoteUrl)
+                && existing.branch.equals(candidate.branch)
+                && existing.privateKeyPath.equals(candidate.privateKeyPath);
     }
 
     private volatile WorkspaceInspection selectedInspection;
@@ -539,11 +539,7 @@ public final class SetupDialog extends JDialog {
         config.authorEmail = value(authorEmailField).trim();
         config.autoStart = autoStartBox.isSelected();
         config.startMinimized = minimizedBox.isSelected();
-        try {
-            config.pollIntervalSeconds = Long.parseLong(pollIntervalField.getText().trim());
-        } catch (NumberFormatException exception) {
-            throw new IllegalArgumentException("检查间隔必须是整数秒");
-        }
+        config.pollIntervalSeconds = parsePollInterval(pollIntervalField.getText());
         config.syncMode = (SyncMode) syncModeField.getSelectedItem();
         config.paused = false;
         config.validate();
@@ -601,8 +597,8 @@ public final class SetupDialog extends JDialog {
         draft.autoStart = autoStartBox.isSelected();
         draft.startMinimized = minimizedBox.isSelected();
         try {
-            draft.pollIntervalSeconds = Long.parseLong(pollIntervalField.getText().trim());
-        } catch (NumberFormatException exception) {
+            draft.pollIntervalSeconds = parsePollInterval(pollIntervalField.getText());
+        } catch (IllegalArgumentException exception) {
             draft.pollIntervalSeconds = 30;
         }
         draft.syncMode = (SyncMode) syncModeField.getSelectedItem();
@@ -802,6 +798,19 @@ public final class SetupDialog extends JDialog {
     private static String defaultTaskName(Path path) {
         Path fileName = path.getFileName();
         return fileName == null ? "同步任务" : fileName.toString();
+    }
+
+    static long parsePollInterval(String value) {
+        long seconds;
+        try {
+            seconds = Long.parseLong(value == null ? "" : value.trim());
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("检查间隔必须是整数秒");
+        }
+        if (seconds < 1 || seconds > 3_600) {
+            throw new IllegalArgumentException("检查间隔必须在 1 到 3600 秒之间");
+        }
+        return seconds;
     }
 
     private static final class SyncModeRenderer extends javax.swing.DefaultListCellRenderer {
