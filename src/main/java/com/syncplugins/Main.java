@@ -150,9 +150,13 @@ public final class Main {
 
         java.util.function.Function<SetupResult, AppConfig> saveTask = result -> {
             try {
-                AppConfig saved = result.config().taskId == null || result.config().taskId.isBlank()
-                        ? taskRepository.saveNew(result.config())
-                        : taskRepository.save(result.config());
+                AppConfig saved;
+                if (result.config().taskId == null || result.config().taskId.isBlank()) {
+                    saved = taskRepository.saveNew(result.config());
+                } else {
+                    taskRepository.save(result.config());
+                    saved = result.config();
+                }
                 secretStore.savePassphrase(saved.privateKeyPath, result.passphrase());
                 controller.addOrUpdate(saved, true);
                 List<AppConfig> current = controller.snapshots().stream()
@@ -167,6 +171,8 @@ public final class Main {
             try {
                 controller.removeTask(taskId);
                 taskRepository.delete(taskId);
+                applyAutoStart(controller.snapshots().stream()
+                        .anyMatch(snapshot -> snapshot.config().autoStart));
             } catch (IOException exception) {
                 throw new IllegalStateException("无法删除任务：" + exception.getMessage(), exception);
             }
