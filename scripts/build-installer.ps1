@@ -38,7 +38,7 @@ try {
     }
     $commonArguments = @(
         "--name", "SyncPlugins",
-        "--app-version", "1.2.3",
+        "--app-version", "1.2.4",
         "--vendor", "SyncPlugins",
         "--description", "Automatic GitHub synchronization for a Git worktree",
         "--input", $inputDirectory,
@@ -47,7 +47,11 @@ try {
         "--dest", $dist,
         "--java-options", "-Dfile.encoding=UTF-8",
         "--java-options", "-Dstdout.encoding=UTF-8",
-        "--java-options", "-Dstderr.encoding=UTF-8"
+        "--java-options", "-Dstderr.encoding=UTF-8",
+        "--java-options", "-Xms32m",
+        "--java-options", "-Xmx256m",
+        "--java-options", "-XX:MaxMetaspaceSize=128m",
+        "--java-options", "-XX:+UseSerialGC"
     )
 
     if ($Portable) {
