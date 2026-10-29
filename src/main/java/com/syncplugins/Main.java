@@ -103,6 +103,9 @@ public final class Main {
             inputMemory = memoryStore.load();
             tasks = new ArrayList<>(taskRepository.loadAll());
             taskRepository.saveAll(tasks);
+            if (!tasks.isEmpty()) {
+                migrateSingleTaskRuntimeData(paths, tasks.get(0).taskId);
+            }
         } catch (Exception exception) {
             LOGGER.log(Level.SEVERE, "加载任务失败", exception);
             JOptionPane.showMessageDialog(null, exception.getMessage(),
@@ -255,6 +258,34 @@ public final class Main {
         Path legacyBackups = legacy.resolve("backups");
         if (Files.isDirectory(legacyBackups) && !Files.exists(paths.backupsDirectory())) {
             copyTree(legacyBackups, paths.backupsDirectory());
+        }
+    }
+
+    private static void migrateSingleTaskRuntimeData(AppPaths paths, String taskId) throws IOException {
+        Files.createDirectories(paths.statesDirectory());
+        Path legacyState = paths.localDataDirectory().resolve("state.json");
+        Path taskState = paths.statesDirectory().resolve(taskId + ".json");
+        if (Files.isRegularFile(legacyState) && !Files.exists(taskState)) {
+            Files.copy(legacyState, taskState);
+        }
+        Path taskBackups = paths.backupsDirectory().resolve(taskId);
+        if (!Files.isDirectory(paths.backupsDirectory()) || Files.exists(taskBackups)) {
+            return;
+        }
+        boolean hasLegacyBackups;
+        try (var children = Files.list(paths.backupsDirectory())) {
+            hasLegacyBackups = children.anyMatch(path ->
+                    Files.isDirectory(path) && Files.isRegularFile(path.resolve("backup.json")));
+        }
+        if (hasLegacyBackups) {
+            Files.createDirectories(taskBackups);
+            try (var children = Files.list(paths.backupsDirectory())) {
+                for (Path backup : children.toList()) {
+                    if (Files.isRegularFile(backup.resolve("backup.json"))) {
+                        copyTree(backup, taskBackups.resolve(backup.getFileName()));
+                    }
+                }
+            }
         }
     }
 
