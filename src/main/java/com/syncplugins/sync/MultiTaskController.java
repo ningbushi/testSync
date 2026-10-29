@@ -80,6 +80,14 @@ public final class MultiTaskController implements AutoCloseable {
         return runtime == null ? null : snapshot(runtime);
     }
 
+    public synchronized SyncController taskController(String taskId) {
+        Runtime runtime = runtimes.get(taskId);
+        if (runtime == null) {
+            throw new IllegalArgumentException("任务不存在：" + taskId);
+        }
+        return runtime.controller;
+    }
+
     public List<TaskSnapshot> snapshots() {
         synchronized (this) {
             return runtimes.values().stream()
