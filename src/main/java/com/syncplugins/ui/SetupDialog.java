@@ -157,7 +157,7 @@ public final class SetupDialog extends JDialog {
                 "历史输入可从下拉列表选择", null);
         row = addSection(form, row, "启动选项");
         row = addTextRow(form, row, "检查间隔（秒）", pollIntervalSpinner,
-                "默认 30 秒；文件事件仍会实时触发，此项用于补充扫描和云端更新检查");
+                "默认 30 秒；程序只按此间隔扫描，启动和正常退出时会强制同步");
         GridBagConstraints optionConstraints = constraints(1, row++, 2, 1);
         JPanel options = new JPanel();
         options.setLayout(new BoxLayout(options, BoxLayout.Y_AXIS));
