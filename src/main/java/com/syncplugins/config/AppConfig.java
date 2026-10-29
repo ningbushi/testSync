@@ -8,6 +8,8 @@ import java.util.Objects;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public final class AppConfig {
     public int schemaVersion = 2;
+    public String taskId = "";
+    public String taskName = "";
     public String repositoryPath = "";
     public String remoteUrl = "";
     public String branch = "";
@@ -35,6 +37,8 @@ public final class AppConfig {
     public AppConfig copy() {
         AppConfig copy = new AppConfig();
         copy.schemaVersion = schemaVersion;
+        copy.taskId = taskId;
+        copy.taskName = taskName;
         copy.repositoryPath = repositoryPath;
         copy.remoteUrl = remoteUrl;
         copy.branch = branch;
@@ -53,6 +57,10 @@ public final class AppConfig {
 
     public void validate() {
         Objects.requireNonNull(repositoryPath, "repositoryPath");
+        if (taskId != null && !taskId.isBlank()
+                && !taskId.matches("[a-zA-Z0-9_-]+")) {
+            throw new IllegalArgumentException("任务 ID 包含无效字符");
+        }
         if (debounceMillis < 500 || debounceMillis > 60_000) {
             throw new IllegalArgumentException("同步防抖时间必须在 0.5 到 60 秒之间");
         }
