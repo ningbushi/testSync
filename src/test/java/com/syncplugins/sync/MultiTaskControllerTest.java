@@ -41,9 +41,16 @@ class MultiTaskControllerTest {
             controller.addListener(updates::add);
             controller.start(List.of(first.config(), second.config()));
 
-            await(Duration.ofSeconds(20), () ->
-                    remoteFile(first.remote(), "a.txt") != null
-                            && remoteFile(second.remote(), "b.txt") != null);
+            try {
+                await(Duration.ofSeconds(20), () ->
+                        remoteFile(first.remote(), "a.txt") != null
+                                && remoteFile(second.remote(), "b.txt") != null);
+            } catch (AssertionError error) {
+                String diagnostics = controller.snapshots().stream()
+                        .map(snapshot -> snapshot.config().taskName + " => " + snapshot.status())
+                        .reduce("", (left, right) -> left + "\n" + right);
+                throw new AssertionError(error.getMessage() + diagnostics, error);
+            }
 
             assertThat(controller.snapshots()).hasSize(2);
             assertThat(updates).anySatisfy(tasks -> assertThat(tasks).hasSize(2));
