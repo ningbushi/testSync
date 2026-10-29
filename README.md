@@ -4,7 +4,7 @@ SyncPlugins 是一个面向 Windows 10/11 的 GitHub 文件自动同步工具。
 
 发布的 Windows 安装包内置精简 Java 21 运行时。终端用户不需要单独安装 Java、Git 或 OpenSSH。
 
-当前版本：**1.2.2**
+当前版本：**1.2.3**
 
 ## 主要功能
 
@@ -267,7 +267,7 @@ dist\SyncPlugins
 输出：
 
 ```text
-dist\SyncPlugins-1.2.2.exe
+dist\SyncPlugins-1.2.3.exe
 ```
 
 生成 EXE 需要构建机安装 WiX Toolset 3.14 或更高版本。也可以指定 WiX 工具目录：
@@ -322,4 +322,4 @@ dist\SyncPlugins-1.2.2.exe
 
 ### 托盘菜单显示异常
 
-1.1.4 起已使用 Swing 自定义菜单，不再使用 AWT 原生菜单。如果仍显示异常，请确认运行版本为 1.2.2，并提供 `syncplugins.log.0`。
+1.1.4 起已使用 Swing 自定义菜单，不再使用 AWT 原生菜单。如果仍显示异常，请确认运行版本为 1.2.3，并提供 `syncplugins.log.0`。
