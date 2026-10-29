@@ -62,6 +62,7 @@ public final class TaskRepository {
         if (config.taskName == null || config.taskName.isBlank()) {
             config.taskName = defaultName(config);
         }
+        rejectDuplicateLocalFolder(config);
         new ConfigStore(configFile(config.taskId)).save(config);
     }
 
@@ -107,5 +108,31 @@ public final class TaskRepository {
         String path = config.repositoryPath == null ? "" : config.repositoryPath;
         Path fileName = path.isBlank() ? null : Path.of(path).getFileName();
         return fileName == null ? "同步任务" : fileName.toString();
+    }
+
+    private void rejectDuplicateLocalFolder(AppConfig candidate) throws IOException {
+        String candidatePath = normalizedPath(candidate.repositoryPath);
+        try (Stream<Path> files = Files.list(tasksDirectory)) {
+            for (Path file : files.filter(path -> path.getFileName().toString().endsWith(".json")).toList()) {
+                if (file.equals(configFile(candidate.taskId))) {
+                    continue;
+                }
+                try {
+                    AppConfig existing = new ConfigStore(file).load();
+                    if (normalizedPath(existing.repositoryPath).equals(candidatePath)) {
+                        throw new IOException("该本地目录已被任务“" + existing.taskName + "”使用");
+                    }
+                } catch (RuntimeException ignored) {
+                    // Ignore an invalid task file while validating a new task.
+                }
+            }
+        }
+    }
+
+    private static String normalizedPath(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        return Path.of(value).toAbsolutePath().normalize().toString().toLowerCase(java.util.Locale.ROOT);
     }
 }
