@@ -112,6 +112,7 @@ public final class TaskRepository {
 
     private void rejectDuplicateLocalFolder(AppConfig candidate) throws IOException {
         String candidatePath = normalizedPath(candidate.repositoryPath);
+        String candidateTarget = normalizedRemote(candidate.remoteUrl) + "#" + candidate.branch;
         try (Stream<Path> files = Files.list(tasksDirectory)) {
             for (Path file : files.filter(path -> path.getFileName().toString().endsWith(".json")).toList()) {
                 if (file.equals(configFile(candidate.taskId))) {
@@ -121,6 +122,11 @@ public final class TaskRepository {
                     AppConfig existing = new ConfigStore(file).load();
                     if (normalizedPath(existing.repositoryPath).equals(candidatePath)) {
                         throw new IOException("该本地目录已被任务“" + existing.taskName + "”使用");
+                    }
+                    String existingTarget = normalizedRemote(existing.remoteUrl) + "#" + existing.branch;
+                    if (candidateTarget.equals(existingTarget)) {
+                        throw new IOException("仓库和分支已由任务“" + existing.taskName
+                                + "”使用；同一仓库请选择不同分支");
                     }
                 } catch (RuntimeException ignored) {
                     // Ignore an invalid task file while validating a new task.
@@ -134,5 +140,9 @@ public final class TaskRepository {
             return "";
         }
         return Path.of(value).toAbsolutePath().normalize().toString().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static String normalizedRemote(String value) {
+        return value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
     }
 }
