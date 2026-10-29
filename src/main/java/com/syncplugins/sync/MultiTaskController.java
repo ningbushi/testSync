@@ -3,6 +3,7 @@ package com.syncplugins.sync;
 import com.syncplugins.config.AppConfig;
 import com.syncplugins.config.AppState;
 import com.syncplugins.config.StateStore;
+import com.syncplugins.git.SyncOutcome;
 import com.syncplugins.workspace.BackupRecord;
 
 import java.io.IOException;
