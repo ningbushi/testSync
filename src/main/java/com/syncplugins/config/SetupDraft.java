@@ -15,6 +15,7 @@ public final class SetupDraft {
     public boolean autoStart = true;
     public boolean startMinimized = true;
     public long pollIntervalSeconds = 30;
+    public SyncMode syncMode = SyncMode.SCHEDULED;
 
     public static SetupDraft from(AppConfig config) {
         SetupDraft draft = new SetupDraft();
@@ -30,6 +31,7 @@ public final class SetupDraft {
             draft.autoStart = config.autoStart;
             draft.startMinimized = config.startMinimized;
             draft.pollIntervalSeconds = config.pollIntervalSeconds;
+            draft.syncMode = config.syncMode;
         }
         return draft;
     }
@@ -46,6 +48,7 @@ public final class SetupDraft {
         config.autoStart = autoStart;
         config.startMinimized = startMinimized;
         config.pollIntervalSeconds = pollIntervalSeconds;
+        config.syncMode = syncMode;
     }
 
     private static String nonNull(String value) {
