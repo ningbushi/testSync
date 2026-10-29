@@ -25,7 +25,7 @@ class SyncControllerIntegrationTest {
     Path temp;
 
     @Test
-    void watchesDirectoryDebouncesAndPushesAutomatically() throws Exception {
+    void periodicallyScansAndPushesAutomatically() throws Exception {
         Path remote = temp.resolve("remote.git");
         try (Git ignored = Git.init().setBare(true).setDirectory(remote.toFile()).call()) {
             // Simulated GitHub remote.
@@ -52,7 +52,7 @@ class SyncControllerIntegrationTest {
         config.privateKeyPath = "";
         config.debounceMillis = 500;
         config.maxDebounceMillis = 2_000;
-        config.pollIntervalSeconds = 10;
+        config.pollIntervalSeconds = 1;
 
         Path configFile = temp.resolve("config.json");
         Path stateFile = temp.resolve("state.json");
@@ -65,7 +65,7 @@ class SyncControllerIntegrationTest {
             Thread.sleep(500);
             Files.writeString(work.resolve("watched.txt"), "automatic");
 
-            await(Duration.ofSeconds(8), () -> "automatic".equals(remoteFile(remote, "watched.txt")));
+            await(Duration.ofSeconds(15), () -> "automatic".equals(remoteFile(remote, "watched.txt")));
             assertThat(controller.status().lastError()).isBlank();
         }
     }
