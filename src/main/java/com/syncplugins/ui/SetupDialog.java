@@ -96,6 +96,7 @@ public final class SetupDialog extends JDialog {
         this.memory = memoryStore.load();
         this.draftTimer = new Timer(500, event -> persistMemoryQuietly());
         draftTimer.setRepeats(false);
+        setIconImage(AppIcon.image(64));
 
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         addWindowListener(new java.awt.event.WindowAdapter() {
