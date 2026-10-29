@@ -4,6 +4,7 @@ import com.syncplugins.AppPaths;
 import com.syncplugins.config.AppConfig;
 import com.syncplugins.config.InputMemoryStore;
 import com.syncplugins.config.TaskRepository;
+import com.syncplugins.config.SyncMode;
 import com.syncplugins.security.KnownHostsStore;
 import com.syncplugins.security.SecretStore;
 import com.syncplugins.sync.MultiTaskController;
@@ -317,7 +318,13 @@ public final class MainWindow {
             state = "尚未配置任务";
             color = new Color(110, 116, 126);
         } else {
-            state = list.size() + " 个任务定时检查中";
+            boolean realtime = list.stream().anyMatch(snapshot ->
+                    snapshot.config().syncMode == SyncMode.REALTIME);
+            boolean scheduled = list.stream().anyMatch(snapshot ->
+                    snapshot.config().syncMode == SyncMode.SCHEDULED);
+            String mode = realtime && scheduled ? "实时/定时模式"
+                    : realtime ? "实时监控中" : "定时检查中";
+            state = list.size() + " 个任务，" + mode;
             color = new Color(25, 125, 65);
         }
         stateLabel.setText(state);
@@ -528,7 +535,8 @@ public final class MainWindow {
                 String state = snapshot.status().syncing() ? "同步中"
                         : snapshot.status().halted() ? "需处理"
                         : snapshot.status().paused() ? "已暂停" : "定时检查";
-                setText(snapshot.config().taskName + "  ·  " + state);
+                setText(snapshot.config().taskName + "  ·  " + state
+                        + (snapshot.config().syncMode == SyncMode.REALTIME ? " · 实时" : " · 定时"));
             }
             return this;
         }
