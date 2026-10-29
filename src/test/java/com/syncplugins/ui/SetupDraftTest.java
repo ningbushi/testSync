@@ -48,6 +48,16 @@ class SetupDraftTest {
         assertThat(restored.syncMode).isEqualTo(SyncMode.SCHEDULED);
     }
 
+    @Test
+    void parsesUserEnteredPollingIntervalAndDetectsMetadataOnlyEdit() {
+        AppConfig existing = completeTask("same-id");
+        AppConfig candidate = existing.copy();
+        candidate.pollIntervalSeconds = SetupDialog.parsePollInterval("777");
+
+        assertThat(candidate.pollIntervalSeconds).isEqualTo(777);
+        assertThat(SetupDialog.sameWorkspaceBinding(existing, candidate)).isTrue();
+    }
+
     private static AppConfig completeTask(String taskId) {
         AppConfig config = new AppConfig();
         config.taskId = taskId;
