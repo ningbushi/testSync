@@ -30,8 +30,6 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JScrollPane;
-import javax.swing.JSpinner;
-import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingWorker;
 import javax.swing.Timer;
 import javax.swing.WindowConstants;
@@ -71,8 +69,7 @@ public final class SetupDialog extends JDialog {
     private final JComboBox<SyncMode> syncModeField = new JComboBox<>(new DefaultComboBoxModel<>(new SyncMode[]{
             SyncMode.SCHEDULED, SyncMode.REALTIME
     }));
-    private final JSpinner pollIntervalSpinner = new JSpinner(
-            new SpinnerNumberModel(30, 1, 3_600, 1));
+    private final javax.swing.JTextField pollIntervalField = new javax.swing.JTextField("30");
     private final JCheckBox autoStartBox = new JCheckBox("登录 Windows 后自动启动", true);
     private final JCheckBox minimizedBox = new JCheckBox("启动后缩到系统托盘", true);
     private final JLabel feedbackLabel = new JLabel(" ");
@@ -83,6 +80,7 @@ public final class SetupDialog extends JDialog {
     private boolean loading = true;
     private SetupResult result;
     private String originalTaskId = "";
+    private AppConfig editingConfig;
 
     public SetupDialog(java.awt.Window owner, AppConfig existing, InputMemoryStore memoryStore,
                        SecretStore secretStore, KnownHostsStore knownHosts,
@@ -93,6 +91,8 @@ public final class SetupDialog extends JDialog {
         this.secretStore = secretStore;
         this.workspaceService = workspaceService;
         this.knownHosts = knownHosts;
+        this.editingConfig = existing != null && existing.isComplete()
+                && existing.taskId != null && !existing.taskId.isBlank() ? existing.copy() : null;
         this.memory = memoryStore.load();
         this.draftTimer = new Timer(500, event -> persistMemoryQuietly());
         draftTimer.setRepeats(false);
@@ -163,7 +163,7 @@ public final class SetupDialog extends JDialog {
         row = addComboRow(form, row, "邮箱", authorEmailField,
                 "历史输入可从下拉列表选择", null);
         row = addSection(form, row, "启动选项");
-        row = addTextRow(form, row, "检查间隔（秒）", pollIntervalSpinner,
+        row = addTextRow(form, row, "检查间隔（秒）", pollIntervalField,
                 "定时模式的扫描周期；实时模式也按此间隔检查云端和补偿事件");
         GridBagConstraints optionConstraints = constraints(1, row++, 2, 1);
         JPanel options = new JPanel();
@@ -216,7 +216,8 @@ public final class SetupDialog extends JDialog {
         setValues(authorEmailField, memory.authorEmails, draft.authorEmail);
         autoStartBox.setSelected(draft.autoStart);
         minimizedBox.setSelected(draft.startMinimized);
-        pollIntervalSpinner.setValue(Math.max(1, Math.min(3_600, draft.pollIntervalSeconds)));
+        pollIntervalField.setText(String.valueOf(
+                Math.max(1, Math.min(3_600, draft.pollIntervalSeconds))));
         syncModeField.setSelectedItem(draft.syncMode == null ? SyncMode.SCHEDULED : draft.syncMode);
     }
 
@@ -280,7 +281,22 @@ public final class SetupDialog extends JDialog {
                 });
             }
         }
-        pollIntervalSpinner.addChangeListener(event -> scheduleDraftSave());
+        pollIntervalField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent event) {
+                scheduleDraftSave();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent event) {
+                scheduleDraftSave();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent event) {
+                scheduleDraftSave();
+            }
+        });
         syncModeField.addActionListener(event -> scheduleDraftSave());
     }
 
@@ -307,6 +323,10 @@ public final class SetupDialog extends JDialog {
             showError(exception.getMessage());
             return;
         }
+        if (isMetadataOnlyEdit(candidate)) {
+            finishSave(candidate);
+            return;
+        }
         setBusy(true, "正在检测远端和工作区...");
         runInspection(candidate, inspection -> {
             selectedInspection = inspection;
@@ -321,6 +341,14 @@ public final class SetupDialog extends JDialog {
                 prepareWorkspace(inspection, null);
             }
         });
+    }
+
+    private boolean isMetadataOnlyEdit(AppConfig candidate) {
+        return editingConfig != null
+                && editingConfig.repositoryPath.equals(candidate.repositoryPath)
+                && editingConfig.remoteUrl.equals(candidate.remoteUrl)
+                && editingConfig.branch.equals(candidate.branch)
+                && editingConfig.privateKeyPath.equals(candidate.privateKeyPath);
     }
 
     private volatile WorkspaceInspection selectedInspection;
@@ -511,7 +539,11 @@ public final class SetupDialog extends JDialog {
         config.authorEmail = value(authorEmailField).trim();
         config.autoStart = autoStartBox.isSelected();
         config.startMinimized = minimizedBox.isSelected();
-        config.pollIntervalSeconds = ((Number) pollIntervalSpinner.getValue()).longValue();
+        try {
+            config.pollIntervalSeconds = Long.parseLong(pollIntervalField.getText().trim());
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("检查间隔必须是整数秒");
+        }
         config.syncMode = (SyncMode) syncModeField.getSelectedItem();
         config.paused = false;
         config.validate();
@@ -568,7 +600,11 @@ public final class SetupDialog extends JDialog {
         draft.authorEmail = value(authorEmailField).trim();
         draft.autoStart = autoStartBox.isSelected();
         draft.startMinimized = minimizedBox.isSelected();
-        draft.pollIntervalSeconds = ((Number) pollIntervalSpinner.getValue()).longValue();
+        try {
+            draft.pollIntervalSeconds = Long.parseLong(pollIntervalField.getText().trim());
+        } catch (NumberFormatException exception) {
+            draft.pollIntervalSeconds = 30;
+        }
         draft.syncMode = (SyncMode) syncModeField.getSelectedItem();
         return draft;
     }
