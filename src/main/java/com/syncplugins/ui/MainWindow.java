@@ -317,7 +317,7 @@ public final class MainWindow {
             state = "尚未配置任务";
             color = new Color(110, 116, 126);
         } else {
-            state = list.size() + " 个任务监听中";
+            state = list.size() + " 个任务定时检查中";
             color = new Color(25, 125, 65);
         }
         stateLabel.setText(state);
@@ -527,7 +527,7 @@ public final class MainWindow {
             if (value instanceof TaskSnapshot snapshot) {
                 String state = snapshot.status().syncing() ? "同步中"
                         : snapshot.status().halted() ? "需处理"
-                        : snapshot.status().paused() ? "已暂停" : "监听中";
+                        : snapshot.status().paused() ? "已暂停" : "定时检查";
                 setText(snapshot.config().taskName + "  ·  " + state);
             }
             return this;
