@@ -5,6 +5,7 @@ import com.syncplugins.config.AppConfig;
 import com.syncplugins.config.InputMemory;
 import com.syncplugins.config.InputMemoryStore;
 import com.syncplugins.config.SetupDraft;
+import com.syncplugins.config.SyncMode;
 import com.syncplugins.git.SyncException;
 import com.syncplugins.security.KnownHostKey;
 import com.syncplugins.security.KnownHostsStore;
@@ -67,6 +68,9 @@ public final class SetupDialog extends JDialog {
     private final JPasswordField passphraseField = new JPasswordField();
     private final JComboBox<String> authorNameField = editableCombo();
     private final JComboBox<String> authorEmailField = editableCombo();
+    private final JComboBox<SyncMode> syncModeField = new JComboBox<>(new DefaultComboBoxModel<>(new SyncMode[]{
+            SyncMode.SCHEDULED, SyncMode.REALTIME
+    }));
     private final JSpinner pollIntervalSpinner = new JSpinner(
             new SpinnerNumberModel(30, 1, 3_600, 1));
     private final JCheckBox autoStartBox = new JCheckBox("登录 Windows 后自动启动", true);
@@ -145,6 +149,9 @@ public final class SetupDialog extends JDialog {
         row = addComboRow(form, row, "分支", branchField,
                 "检测后会填充远端分支", null);
         row = addTextRow(form, row, "检测结果", detectedModeLabel);
+        row = addTextRow(form, row, "同步模式", syncModeField,
+                "定时扫描资源占用较低；实时监控响应更快但会常驻文件监听器");
+        syncModeField.setRenderer(new SyncModeRenderer());
         row = addSection(form, row, "SSH 身份");
         row = addComboRow(form, row, "私钥文件", keyField,
                 "不同私钥的口令会分别加密保存", this::choosePrivateKey);
@@ -157,7 +164,7 @@ public final class SetupDialog extends JDialog {
                 "历史输入可从下拉列表选择", null);
         row = addSection(form, row, "启动选项");
         row = addTextRow(form, row, "检查间隔（秒）", pollIntervalSpinner,
-                "默认 30 秒；程序只按此间隔扫描，启动和正常退出时会强制同步");
+                "定时模式的扫描周期；实时模式也按此间隔检查云端和补偿事件");
         GridBagConstraints optionConstraints = constraints(1, row++, 2, 1);
         JPanel options = new JPanel();
         options.setLayout(new BoxLayout(options, BoxLayout.Y_AXIS));
@@ -210,6 +217,7 @@ public final class SetupDialog extends JDialog {
         autoStartBox.setSelected(draft.autoStart);
         minimizedBox.setSelected(draft.startMinimized);
         pollIntervalSpinner.setValue(Math.max(1, Math.min(3_600, draft.pollIntervalSeconds)));
+        syncModeField.setSelectedItem(draft.syncMode == null ? SyncMode.SCHEDULED : draft.syncMode);
     }
 
     static SetupDraft draftForSetup(AppConfig existing, InputMemory memory) {
@@ -273,6 +281,7 @@ public final class SetupDialog extends JDialog {
             }
         }
         pollIntervalSpinner.addChangeListener(event -> scheduleDraftSave());
+        syncModeField.addActionListener(event -> scheduleDraftSave());
     }
 
     private void inspectOnly() {
@@ -503,6 +512,7 @@ public final class SetupDialog extends JDialog {
         config.autoStart = autoStartBox.isSelected();
         config.startMinimized = minimizedBox.isSelected();
         config.pollIntervalSeconds = ((Number) pollIntervalSpinner.getValue()).longValue();
+        config.syncMode = (SyncMode) syncModeField.getSelectedItem();
         config.paused = false;
         config.validate();
         return config;
@@ -519,6 +529,7 @@ public final class SetupDialog extends JDialog {
         draft.autoStart = config.autoStart;
         draft.startMinimized = config.startMinimized;
         draft.pollIntervalSeconds = config.pollIntervalSeconds;
+        draft.syncMode = config.syncMode;
         return draft;
     }
 
@@ -558,6 +569,7 @@ public final class SetupDialog extends JDialog {
         draft.autoStart = autoStartBox.isSelected();
         draft.startMinimized = minimizedBox.isSelected();
         draft.pollIntervalSeconds = ((Number) pollIntervalSpinner.getValue()).longValue();
+        draft.syncMode = (SyncMode) syncModeField.getSelectedItem();
         return draft;
     }
 
@@ -754,5 +766,20 @@ public final class SetupDialog extends JDialog {
     private static String defaultTaskName(Path path) {
         Path fileName = path.getFileName();
         return fileName == null ? "同步任务" : fileName.toString();
+    }
+
+    private static final class SyncModeRenderer extends javax.swing.DefaultListCellRenderer {
+        @Override
+        public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list,
+                                                              Object value, int index,
+                                                              boolean selected, boolean focus) {
+            super.getListCellRendererComponent(list, value, index, selected, focus);
+            if (value == SyncMode.REALTIME) {
+                setText("实时监控（低延迟，资源较高）");
+            } else if (value == SyncMode.SCHEDULED) {
+                setText("定时扫描（低资源占用）");
+            }
+            return this;
+        }
     }
 }
