@@ -140,9 +140,9 @@ public final class MultiTaskController implements AutoCloseable {
 
     public void shutdownGracefully() {
         shuttingDown = true;
-        List<CompletableFuture<SyncOutcome>> futures = new ArrayList<>();
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (Runtime runtime : List.copyOf(runtimes.values())) {
-            futures.add(runtime.controller.syncNow());
+            futures.add(CompletableFuture.runAsync(runtime.controller::shutdownGracefully));
         }
         try {
             CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
@@ -150,7 +150,7 @@ public final class MultiTaskController implements AutoCloseable {
         } catch (Exception ignored) {
             // Uncommitted files remain local and are queued again on next start.
         }
-        close();
+        runtimes.clear();
     }
 
     private AppState loadState(String taskId) {
