@@ -3,15 +3,21 @@ package com.syncplugins.ui;
 import com.syncplugins.AppPaths;
 import com.syncplugins.config.AppConfig;
 import com.syncplugins.config.InputMemoryStore;
+import com.syncplugins.config.TaskRepository;
+import com.syncplugins.security.KnownHostsStore;
 import com.syncplugins.security.SecretStore;
-import com.syncplugins.sync.SyncController;
+import com.syncplugins.sync.MultiTaskController;
 import com.syncplugins.sync.SyncStatus;
+import com.syncplugins.sync.TaskSnapshot;
 import com.syncplugins.workspace.WorkspaceBootstrapService;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.DefaultComboBoxModel;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
@@ -21,11 +27,12 @@ import javax.swing.JProgressBar;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
-import javax.swing.SwingUtilities;
 import javax.swing.JWindow;
+import javax.swing.SwingUtilities;
 import javax.swing.WindowConstants;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.Font;
@@ -42,55 +49,70 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 public final class MainWindow {
     private static final DateTimeFormatter TIME = DateTimeFormatter
             .ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
 
     private final JFrame frame = new JFrame("SyncPlugins");
-    private final SyncController controller;
-    private final Consumer<SetupResult> saveSettings;
+    private final MultiTaskController controller;
+    private final TaskRepository taskRepository;
+    private final Function<SetupResult, AppConfig> saveTask;
+    private final Consumer<String> deleteTask;
     private final Runnable exitAction;
     private final AppPaths paths = AppPaths.system();
     private final InputMemoryStore memoryStore;
     private final SecretStore secretStore;
     private final WorkspaceBootstrapService workspaceService;
+    private final JComboBox<TaskSnapshot> taskSelector = new JComboBox<>();
     private final JLabel stateLabel = new JLabel("正在启动");
     private final JLabel repositoryLabel = new JLabel(" ");
     private final JLabel branchLabel = new JLabel(" ");
     private final JLabel lastSyncLabel = new JLabel("尚未同步");
     private final JLabel errorLabel = new JLabel(" ");
     private final JLabel queueLabel = new JLabel(" ");
-    private final JButton pauseButton = new JButton("暂停同步");
-    private final JButton syncButton = new JButton("立即同步");
-    private final JButton settingsButton = new JButton("设置");
-    private final JButton cloudButton = new JButton("从云端下载");
-    private final JButton backupButton = new JButton("备份");
     private final JProgressBar progressBar = new JProgressBar();
+    private final JButton pauseButton = new JButton("暂停选中任务");
+    private final JButton syncButton = new JButton("同步选中任务");
+    private final JButton settingsButton = new JButton("任务管理");
+    private final JButton cloudButton = new JButton("下载选中任务");
+    private final JButton backupButton = new JButton("备份");
+    private final JTextArea logArea = new JTextArea();
     private final JPopupMenu trayMenu = new JPopupMenu();
     private final JWindow trayPopupOwner = new JWindow();
     private final JMenuItem trayProgressItem = new JMenuItem("同步进度：等待同步");
-    private final JTextArea logArea = new JTextArea();
     private TrayIcon trayIcon;
+    private List<TaskSnapshot> snapshots = List.of();
+    private String selectedTaskId = "";
     private String lastLoggedError = "";
     private String lastLoggedMessage = "";
-    private AppConfig settings;
+    private boolean updatingSelector;
 
-    public MainWindow(SyncController controller, AppConfig initialSettings,
-                      Consumer<SetupResult> saveSettings, Runnable exitAction,
+    public MainWindow(MultiTaskController controller, List<AppConfig> tasks,
+                      TaskRepository taskRepository,
+                      Function<SetupResult, AppConfig> saveTask,
+                      Consumer<String> deleteTask,
+                      Runnable exitAction,
                       InputMemoryStore memoryStore, SecretStore secretStore,
                       WorkspaceBootstrapService workspaceService) {
         this.controller = controller;
-        this.settings = initialSettings;
-        this.saveSettings = saveSettings;
+        this.taskRepository = taskRepository;
+        this.saveTask = saveTask;
+        this.deleteTask = deleteTask;
         this.exitAction = exitAction;
         this.memoryStore = memoryStore;
         this.secretStore = secretStore;
         this.workspaceService = workspaceService;
+        if (!tasks.isEmpty()) {
+            selectedTaskId = tasks.get(0).taskId;
+        }
         frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
-        frame.setMinimumSize(new Dimension(760, 540));
-        frame.setSize(820, 590);
+        frame.setMinimumSize(new Dimension(900, 600));
+        frame.setSize(980, 660);
         frame.setLocationByPlatform(true);
         frame.setLayout(new BorderLayout());
         frame.add(buildContent(), BorderLayout.CENTER);
@@ -101,7 +123,13 @@ public final class MainWindow {
                 hideToTray();
             }
         });
-        controller.addListener(status -> SwingUtilities.invokeLater(() -> render(status)));
+        taskSelector.addActionListener(event -> {
+            if (!updatingSelector && taskSelector.getSelectedItem() instanceof TaskSnapshot snapshot) {
+                selectedTaskId = snapshot.config().taskId;
+                renderSelected(snapshot);
+            }
+        });
+        controller.addListener(list -> SwingUtilities.invokeLater(() -> renderTasks(list)));
     }
 
     public void showWindow() {
@@ -123,7 +151,6 @@ public final class MainWindow {
         trayMenu.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
             @Override
             public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent event) {
-                // The owner stays visible until Swing closes the popup.
             }
 
             @Override
@@ -170,18 +197,19 @@ public final class MainWindow {
         return frame;
     }
 
-    public void updateSettings(AppConfig config) {
-        this.settings = config;
-    }
-
     private JPanel buildContent() {
         JPanel root = new JPanel(new BorderLayout(0, 16));
         root.setBorder(BorderFactory.createEmptyBorder(22, 24, 12, 24));
-        JPanel top = new JPanel(new BorderLayout());
+        JPanel top = new JPanel(new BorderLayout(12, 0));
         JLabel title = new JLabel("SyncPlugins");
         title.setFont(title.getFont().deriveFont(Font.BOLD, 24f));
         stateLabel.setFont(stateLabel.getFont().deriveFont(Font.BOLD, 15f));
-        top.add(title, BorderLayout.WEST);
+        JPanel left = new JPanel(new BorderLayout(10, 0));
+        left.add(title, BorderLayout.WEST);
+        taskSelector.setPreferredSize(new Dimension(280, 30));
+        taskSelector.setRenderer(new TaskSnapshotRenderer());
+        left.add(taskSelector, BorderLayout.CENTER);
+        top.add(left, BorderLayout.WEST);
         top.add(stateLabel, BorderLayout.EAST);
         root.add(top, BorderLayout.NORTH);
 
@@ -199,7 +227,6 @@ public final class MainWindow {
         progressBar.setStringPainted(true);
         progressBar.setVisible(false);
         progressBar.setMaximum(1);
-        progressBar.setString("等待同步");
         summary.add(progressBar);
         summary.add(Box.createVerticalStrut(8));
         summary.add(queueLabel);
@@ -215,7 +242,7 @@ public final class MainWindow {
         logArea.setWrapStyleWord(true);
         logArea.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
         JScrollPane scroll = new JScrollPane(logArea);
-        scroll.setBorder(BorderFactory.createTitledBorder("操作记录"));
+        scroll.setBorder(BorderFactory.createTitledBorder("选中任务操作记录"));
         body.add(scroll, BorderLayout.CENTER);
         root.add(body, BorderLayout.CENTER);
         return root;
@@ -224,53 +251,87 @@ public final class MainWindow {
     private JPanel buildFooter() {
         JPanel footer = new JPanel(new BorderLayout());
         footer.setBorder(BorderFactory.createEmptyBorder(0, 24, 20, 24));
-        settingsButton.addActionListener(event -> openSettings());
-        JButton openButton = new JButton("打开仓库目录");
-        openButton.addActionListener(event -> openRepository());
-        syncButton.addActionListener(event -> controller.syncNow());
-        pauseButton.addActionListener(event -> togglePause());
-        cloudButton.addActionListener(event -> downloadFromCloud());
+        settingsButton.addActionListener(event -> openTaskManager());
+        JButton open = new JButton("打开选中目录");
+        open.addActionListener(event -> openRepository());
+        JButton syncAll = new JButton("全部同步");
+        syncAll.addActionListener(event -> controller.syncAll());
+        JButton pauseAll = new JButton("全部暂停");
+        pauseAll.addActionListener(event -> controller.pauseAll(true));
+        syncButton.addActionListener(event -> selectedControllerSync());
+        pauseButton.addActionListener(event -> toggleSelectedPause());
+        cloudButton.addActionListener(event -> downloadSelected());
         backupButton.addActionListener(event -> showBackups());
-        JPanel actions = new JPanel(new GridLayout(1, 6, 8, 0));
+        JPanel actions = new JPanel(new GridLayout(1, 8, 7, 0));
         actions.add(settingsButton);
-        actions.add(openButton);
+        actions.add(open);
+        actions.add(syncButton);
+        actions.add(syncAll);
+        actions.add(pauseButton);
+        actions.add(pauseAll);
         actions.add(cloudButton);
         actions.add(backupButton);
-        actions.add(syncButton);
-        actions.add(pauseButton);
         footer.add(actions, BorderLayout.EAST);
         return footer;
     }
 
-    private void render(SyncStatus status) {
+    private void renderTasks(List<TaskSnapshot> list) {
+        snapshots = list;
+        TaskSnapshot selected = selectedSnapshot();
+        if (selected == null && !list.isEmpty()) {
+            selected = list.get(0);
+            selectedTaskId = selected.config().taskId;
+        }
+        updatingSelector = true;
+        taskSelector.setModel(new DefaultComboBoxModel<>(list.toArray(TaskSnapshot[]::new)));
+        if (selected != null) {
+            for (TaskSnapshot snapshot : list) {
+                if (snapshot.config().taskId.equals(selectedTaskId)) {
+                    taskSelector.setSelectedItem(snapshot);
+                    break;
+                }
+            }
+        }
+        updatingSelector = false;
+        renderAggregate(list);
+        if (taskSelector.getSelectedItem() instanceof TaskSnapshot snapshot) {
+            renderSelected(snapshot);
+        }
+    }
+
+    private void renderAggregate(List<TaskSnapshot> list) {
+        int active = (int) list.stream().filter(snapshot -> snapshot.status().syncing()).count();
+        int errors = (int) list.stream().filter(snapshot ->
+                snapshot.status().halted() || snapshot.status().failure() != null).count();
+        int queued = list.stream().mapToInt(snapshot -> snapshot.status().queueSize()).sum();
         String state;
         Color color;
-        if (status.halted()) {
-            state = status.lastError().isBlank() ? "需要处理" : "已暂停";
+        if (active > 0) {
+            state = "多任务同步中 " + active + "/" + list.size();
+            color = new Color(40, 95, 165);
+        } else if (errors > 0) {
+            state = list.size() + " 个任务，需处理 " + errors;
             color = new Color(180, 55, 45);
-        } else if (status.paused()) {
-            state = "已暂停";
-            color = new Color(150, 105, 20);
-        } else if (status.failure() == com.syncplugins.git.SyncFailure.NETWORK) {
-            state = "网络重试中";
-            color = new Color(150, 105, 20);
-        } else if (status.syncing()) {
-            state = "正在同步";
-            color = new Color(40, 95, 165);
-        } else if (status.remoteUpdateAvailable() && !status.syncing()) {
-            state = "云端有更新";
-            color = new Color(40, 95, 165);
-        } else if (status.watching()) {
-            state = status.pendingPush() ? "等待推送" : "监听中";
-            color = status.pendingPush() ? new Color(150, 105, 20) : new Color(25, 125, 65);
+        } else if (list.isEmpty()) {
+            state = "尚未配置任务";
+            color = new Color(110, 116, 126);
         } else {
-            state = "未监听";
-            color = new Color(100, 105, 112);
+            state = list.size() + " 个任务监听中";
+            color = new Color(25, 125, 65);
         }
         stateLabel.setText(state);
         stateLabel.setForeground(color);
-        repositoryLabel.setText("仓库：" + status.repositoryPath());
-        branchLabel.setText("分支：" + status.branch());
+        trayProgressItem.setText("同步进度：" + state + (queued > 0 ? "，队列 " + queued : ""));
+        if (trayIcon != null) {
+            trayIcon.setToolTip("SyncPlugins - " + trayProgressItem.getText().substring(5));
+        }
+    }
+
+    private void renderSelected(TaskSnapshot snapshot) {
+        SyncStatus status = snapshot.status();
+        AppConfig config = snapshot.config();
+        repositoryLabel.setText("任务：" + config.taskName + "    目录：" + config.repositoryPath);
+        branchLabel.setText("仓库：" + config.remoteUrl + "    分支：" + config.branch);
         lastSyncLabel.setText(status.lastSuccessAt() == 0
                 ? "尚未成功推送"
                 : "最后成功：" + TIME.format(Instant.ofEpochMilli(status.lastSuccessAt())));
@@ -278,161 +339,32 @@ public final class MainWindow {
         queueLabel.setText("队列：" + status.queueSize()
                 + (status.failedCount() > 0 ? "，失败 " + status.failedCount() : "")
                 + (status.currentFile().isBlank() ? "" : "，当前 " + status.currentFile()));
-        renderProgress(status);
-        updateTrayProgress(status);
-        pauseButton.setText(status.halted() ? "处理后继续" : status.paused() ? "恢复同步" : "暂停同步");
+        pauseButton.setText(status.halted() ? "处理后继续" : status.paused() ? "恢复选中任务" : "暂停选中任务");
         syncButton.setEnabled(!status.syncing());
-        settingsButton.setEnabled(!status.syncing());
+        settingsButton.setEnabled(true);
         cloudButton.setEnabled(!status.syncing());
         backupButton.setEnabled(!status.syncing());
+        renderProgress(status);
         appendLog(status);
         if (status.halted() && !status.lastError().isBlank()
                 && !status.lastError().equals(lastLoggedError) && trayIcon != null) {
-            trayIcon.displayMessage("SyncPlugins 已暂停", status.lastError(), TrayIcon.MessageType.ERROR);
+            trayIcon.displayMessage("SyncPlugins 任务已暂停",
+                    config.taskName + "：" + status.lastError(), TrayIcon.MessageType.ERROR);
         }
     }
 
     private void appendLog(SyncStatus status) {
-        if (!status.message().equals(lastLoggedMessage)) {
-            lastLoggedMessage = status.message();
+        String key = selectedTaskId + "|" + status.message();
+        if (!key.equals(lastLoggedMessage)) {
+            lastLoggedMessage = key;
             logArea.append(TIME.format(Instant.now()) + "  " + status.message() + "\n");
         }
-        if (!status.lastError().isBlank() && !status.lastError().equals(lastLoggedError)) {
-            lastLoggedError = status.lastError();
+        String errorKey = selectedTaskId + "|" + status.lastError();
+        if (!status.lastError().isBlank() && !errorKey.equals(lastLoggedError)) {
+            lastLoggedError = errorKey;
             logArea.append(TIME.format(Instant.now()) + "  错误：" + status.lastError() + "\n");
         }
-        if (status.lastError().isBlank()) {
-            lastLoggedError = "";
-        }
         logArea.setCaretPosition(logArea.getDocument().getLength());
-    }
-
-    private void togglePause() {
-        SyncStatus status = controller.status();
-        if (status.halted()) {
-            int choice = JOptionPane.showConfirmDialog(frame,
-                    "确认已经在外部 Git 工具中处理完远端冲突或工作区问题？\n"
-                            + "SyncPlugins 会重新检查本地与远端关系，不会自动合并或覆盖远端。",
-                    "继续自动同步", JOptionPane.YES_NO_OPTION);
-            if (choice == JOptionPane.YES_OPTION) {
-                controller.resumeAfterFailure();
-            }
-        } else {
-            controller.setPaused(!status.paused());
-        }
-    }
-
-    private void openSettings() {
-        boolean wasPaused = controller.status().paused();
-        controller.setPaused(true);
-        SetupDialog dialog = new SetupDialog(frame, settings, memoryStore, secretStore,
-                new com.syncplugins.security.KnownHostsStore(paths.knownHostsFile()),
-                workspaceService);
-        SetupResult result = dialog.showDialog();
-        if (result == null) {
-            if (!wasPaused) {
-                controller.setPaused(false);
-            }
-            return;
-        }
-        try {
-            saveSettings.accept(result);
-            updateSettings(result.config());
-            controller.updateConfig(result.config());
-        } catch (IllegalStateException exception) {
-            JOptionPane.showMessageDialog(frame, exception.getMessage(),
-                    "SyncPlugins", JOptionPane.ERROR_MESSAGE);
-        } finally {
-            Arrays.fill(result.passphrase(), '\0');
-        }
-    }
-
-    private void downloadFromCloud() {
-        int choice = JOptionPane.showConfirmDialog(frame,
-                "从 GitHub 下载并覆盖本地吗？\n"
-                        + "本地干净时可安全更新；有本地改动时会先自动备份再覆盖。",
-                "从云端下载", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-        if (choice != JOptionPane.YES_OPTION) {
-            return;
-        }
-        controller.downloadFromCloud().whenComplete((result, error) ->
-                SwingUtilities.invokeLater(() -> {
-                    if (error != null) {
-                        JOptionPane.showMessageDialog(frame, error.getMessage(),
-                                "云端下载失败", JOptionPane.ERROR_MESSAGE);
-                    } else {
-                        JOptionPane.showMessageDialog(frame, result.message(),
-                                "SyncPlugins", JOptionPane.INFORMATION_MESSAGE);
-                    }
-                }));
-    }
-
-    private void showBackups() {
-        new BackupDialog(frame, controller).setVisible(true);
-    }
-
-    private void openRepository() {
-        try {
-            Desktop.getDesktop().open(Path.of(settings.repositoryPath).toFile());
-        } catch (Exception exception) {
-            JOptionPane.showMessageDialog(frame, "无法打开仓库目录：" + exception.getMessage(),
-                    "SyncPlugins", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private void hideToTray() {
-        if (trayIcon != null) {
-            frame.setVisible(false);
-        } else {
-            exitAction.run();
-        }
-    }
-
-    private static BufferedImage createTrayImage() {
-        BufferedImage image = new BufferedImage(32, 32, BufferedImage.TYPE_INT_ARGB);
-        var graphics = image.createGraphics();
-        graphics.setColor(new Color(39, 111, 185));
-        graphics.fillRoundRect(1, 1, 30, 30, 9, 9);
-        graphics.setColor(Color.WHITE);
-        graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 19));
-        graphics.drawString("S", 9, 23);
-        graphics.dispose();
-        return image;
-    }
-
-    private void buildTrayMenu() {
-        trayMenu.removeAll();
-        trayProgressItem.setFont(UiFonts.uiFont(13));
-        trayProgressItem.setEnabled(false);
-        trayMenu.add(trayProgressItem);
-        trayMenu.addSeparator();
-        trayMenu.add(trayMenuItem("打开 SyncPlugins", this::showWindow));
-        trayMenu.add(trayMenuItem("立即同步", () -> controller.syncNow()));
-        trayMenu.add(trayMenuItem("暂停 / 恢复", this::togglePause));
-        trayMenu.add(trayMenuItem("从云端下载", this::downloadFromCloud));
-        trayMenu.add(trayMenuItem("备份管理", this::showBackups));
-        trayMenu.add(trayMenuItem("打开仓库目录", this::openRepository));
-        trayMenu.addSeparator();
-        trayMenu.add(trayMenuItem("退出", () -> exitAction.run()));
-    }
-
-    private JMenuItem trayMenuItem(String text, Runnable action) {
-        JMenuItem item = new JMenuItem(text);
-        item.setFont(UiFonts.uiFont(13));
-        item.addActionListener(event -> action.run());
-        return item;
-    }
-
-    private void showSwingTrayMenu() {
-        if (trayMenu.isVisible()) {
-            trayMenu.setVisible(false);
-            return;
-        }
-        Point pointer = MouseInfo.getPointerInfo() == null
-                ? new Point(0, 0) : MouseInfo.getPointerInfo().getLocation();
-        trayPopupOwner.setLocation(pointer);
-        trayPopupOwner.setVisible(true);
-        trayMenu.show(trayPopupOwner, 0, 0);
     }
 
     private void renderProgress(SyncStatus status) {
@@ -460,28 +392,144 @@ public final class MainWindow {
         }
     }
 
-    private void updateTrayProgress(SyncStatus status) {
-        String text;
-        if (status.downloading()) {
-            text = "正在从云端下载...";
-        } else if (status.restoring()) {
-            text = "正在恢复备份...";
-        } else if (status.syncing() && status.progressTotal() > 0) {
-            text = "同步中 " + Math.min(status.progressDone(), status.progressTotal())
-                    + "/" + status.progressTotal()
-                    + (status.currentFile().isBlank() ? "" : "：" + status.currentFile());
-        } else if (status.syncing()) {
-            text = "正在扫描待同步文件...";
-        } else if (status.queueSize() > 0) {
-            text = "队列剩余 " + status.queueSize()
-                    + (status.failedCount() > 0 ? "，失败 " + status.failedCount() : "");
-        } else {
-            text = "等待同步";
+    private TaskSnapshot selectedSnapshot() {
+        return snapshots.stream()
+                .filter(snapshot -> snapshot.config().taskId.equals(selectedTaskId))
+                .findFirst().orElse(null);
+    }
+
+    private void selectedControllerSync() {
+        if (selectedSnapshot() != null) {
+            // Manager's individual controller is exposed through this helper.
+            controller.taskController(selectedTaskId).syncNow();
         }
-        trayProgressItem.setText("同步进度：" + text);
+    }
+
+    private void toggleSelectedPause() {
+        TaskSnapshot snapshot = selectedSnapshot();
+        if (snapshot == null) {
+            return;
+        }
+        if (snapshot.status().halted()) {
+            int choice = JOptionPane.showConfirmDialog(frame,
+                    "确认已经在外部 Git 工具中处理完问题？",
+                    "继续同步", JOptionPane.YES_NO_OPTION);
+            if (choice == JOptionPane.YES_OPTION) {
+                controller.taskController(selectedTaskId).resumeAfterFailure();
+            }
+        } else {
+            controller.taskController(selectedTaskId).setPaused(!snapshot.status().paused());
+        }
+    }
+
+    private void downloadSelected() {
+        if (selectedSnapshot() == null) {
+            return;
+        }
+        int choice = JOptionPane.showConfirmDialog(frame,
+                "从 GitHub 下载并覆盖选中任务的本地内容吗？\n"
+                        + "本地有改动时会先自动备份。",
+                "从云端下载", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (choice != JOptionPane.YES_OPTION) {
+            return;
+        }
+        controller.downloadFromCloud(selectedTaskId).whenComplete((result, error) ->
+                SwingUtilities.invokeLater(() -> {
+                    if (error != null) {
+                        JOptionPane.showMessageDialog(frame, error.getMessage(),
+                                "云端下载失败", JOptionPane.ERROR_MESSAGE);
+                    }
+                }));
+    }
+
+    private void showBackups() {
+        if (selectedSnapshot() != null) {
+            new BackupDialog(frame, controller, selectedTaskId).setVisible(true);
+        }
+    }
+
+    private void openTaskManager() {
+        new TaskManagerDialog(frame, snapshots.stream().map(TaskSnapshot::config).toList(),
+                memoryStore, secretStore, new KnownHostsStore(paths.knownHostsFile()),
+                workspaceService, saveTask, deleteTask).setVisible(true);
+    }
+
+    private void openRepository() {
+        TaskSnapshot snapshot = selectedSnapshot();
+        if (snapshot == null) {
+            return;
+        }
+        try {
+            Desktop.getDesktop().open(Path.of(snapshot.config().repositoryPath).toFile());
+        } catch (Exception exception) {
+            JOptionPane.showMessageDialog(frame, "无法打开目录：" + exception.getMessage(),
+                    "SyncPlugins", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void hideToTray() {
         if (trayIcon != null) {
-            trayIcon.setToolTip("SyncPlugins - " + text);
+            frame.setVisible(false);
+        } else {
+            exitAction.run();
+        }
+    }
+
+    private void buildTrayMenu() {
+        trayMenu.removeAll();
+        trayProgressItem.setFont(UiFonts.uiFont(13));
+        trayProgressItem.setEnabled(false);
+        trayMenu.add(trayProgressItem);
+        trayMenu.addSeparator();
+        trayMenu.add(trayMenuItem("打开 SyncPlugins", this::showWindow));
+        trayMenu.add(trayMenuItem("同步全部任务", controller::syncAll));
+        trayMenu.add(trayMenuItem("暂停全部任务", () -> controller.pauseAll(true)));
+        trayMenu.add(trayMenuItem("下载选中任务", this::downloadSelected));
+        trayMenu.add(trayMenuItem("任务管理", this::openTaskManager));
+        trayMenu.add(trayMenuItem("备份管理", this::showBackups));
+        trayMenu.addSeparator();
+        trayMenu.add(trayMenuItem("退出", () -> exitAction.run()));
+    }
+
+    private JMenuItem trayMenuItem(String text, Runnable action) {
+        JMenuItem item = new JMenuItem(text);
+        item.setFont(UiFonts.uiFont(13));
+        item.addActionListener(event -> action.run());
+        return item;
+    }
+
+    private void showSwingTrayMenu() {
+        Point pointer = MouseInfo.getPointerInfo() == null
+                ? new Point(0, 0) : MouseInfo.getPointerInfo().getLocation();
+        trayPopupOwner.setLocation(pointer);
+        trayPopupOwner.setVisible(true);
+        trayMenu.show(trayPopupOwner, 0, 0);
+    }
+
+    private static BufferedImage createTrayImage() {
+        BufferedImage image = new BufferedImage(32, 32, BufferedImage.TYPE_INT_ARGB);
+        var graphics = image.createGraphics();
+        graphics.setColor(new Color(39, 111, 185));
+        graphics.fillRoundRect(1, 1, 30, 30, 9, 9);
+        graphics.setColor(Color.WHITE);
+        graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 19));
+        graphics.drawString("S", 9, 23);
+        graphics.dispose();
+        return image;
+    }
+
+    private static final class TaskSnapshotRenderer extends DefaultListCellRenderer {
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                      boolean selected, boolean focus) {
+            super.getListCellRendererComponent(list, value, index, selected, focus);
+            if (value instanceof TaskSnapshot snapshot) {
+                String state = snapshot.status().syncing() ? "同步中"
+                        : snapshot.status().halted() ? "需处理"
+                        : snapshot.status().paused() ? "已暂停" : "监听中";
+                setText(snapshot.config().taskName + "  ·  " + state);
+            }
+            return this;
         }
     }
 }
-
