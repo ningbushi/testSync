@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public final class SetupDraft {
+    public String taskId = "";
+    public String taskName = "";
     public String repositoryPath = "";
     public String remoteUrl = "";
     public String branch = "";
@@ -17,6 +19,8 @@ public final class SetupDraft {
     public static SetupDraft from(AppConfig config) {
         SetupDraft draft = new SetupDraft();
         if (config != null) {
+            draft.taskId = config.taskId;
+            draft.taskName = config.taskName;
             draft.repositoryPath = config.repositoryPath;
             draft.remoteUrl = config.remoteUrl;
             draft.branch = config.branch;
@@ -31,6 +35,8 @@ public final class SetupDraft {
     }
 
     public void applyTo(AppConfig config) {
+        config.taskId = nonNull(taskId);
+        config.taskName = nonNull(taskName);
         config.repositoryPath = nonNull(repositoryPath);
         config.remoteUrl = nonNull(remoteUrl);
         config.branch = nonNull(branch);
