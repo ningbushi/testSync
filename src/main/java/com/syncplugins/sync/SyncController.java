@@ -293,9 +293,18 @@ public final class SyncController implements AutoCloseable {
     }
 
     public void shutdownGracefully() {
-        if (config != null && !halted) {
+        if (config != null) {
             try {
-                triggerDrain(true, Duration.ZERO).get(20, TimeUnit.SECONDS);
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                while (syncInFlight.get() && System.nanoTime() < deadline) {
+                    Thread.sleep(50);
+                }
+                long remainingMillis = Math.max(1,
+                        TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
+                triggerDrain(true, Duration.ZERO).get(remainingMillis, TimeUnit.MILLISECONDS);
+                while (syncInFlight.get() && System.nanoTime() < deadline) {
+                    Thread.sleep(50);
+                }
             } catch (Exception ignored) {
                 // Uncommitted files remain in the worktree for the next launch.
             }
