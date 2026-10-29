@@ -80,10 +80,11 @@ public final class SetupDialog extends JDialog {
     private SetupResult result;
     private String originalTaskId = "";
 
-    public SetupDialog(java.awt.Frame owner, AppConfig existing, InputMemoryStore memoryStore,
+    public SetupDialog(java.awt.Window owner, AppConfig existing, InputMemoryStore memoryStore,
                        SecretStore secretStore, KnownHostsStore knownHosts,
                        WorkspaceBootstrapService workspaceService) {
-        super(owner, existing != null && existing.isComplete() ? "SyncPlugins 设置" : "欢迎使用 SyncPlugins", true);
+        super(owner, existing != null && existing.isComplete() ? "SyncPlugins 设置" : "欢迎使用 SyncPlugins",
+                ModalityType.APPLICATION_MODAL);
         this.memoryStore = memoryStore;
         this.secretStore = secretStore;
         this.workspaceService = workspaceService;
@@ -197,7 +198,11 @@ public final class SetupDialog extends JDialog {
     }
 
     private void populate(AppConfig existing, InputMemory memory) {
-        SetupDraft draft = memory.draftPending
+        boolean editingExistingTask = existing != null && existing.isComplete()
+                && existing.taskId != null && !existing.taskId.isBlank();
+        SetupDraft draft = editingExistingTask
+                ? SetupDraft.from(existing)
+                : memory.draftPending
                 ? memory.draft
                 : existing == null || !existing.isComplete()
                 ? mergeDraft(SetupDraft.from(existing), memory.draft)
