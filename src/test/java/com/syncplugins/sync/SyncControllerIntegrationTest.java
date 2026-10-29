@@ -3,6 +3,7 @@ package com.syncplugins.sync;
 import com.syncplugins.config.AppConfig;
 import com.syncplugins.config.AppState;
 import com.syncplugins.config.ConfigStore;
+import com.syncplugins.config.SyncMode;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -67,6 +68,49 @@ class SyncControllerIntegrationTest {
 
             await(Duration.ofSeconds(15), () -> "automatic".equals(remoteFile(remote, "watched.txt")));
             assertThat(controller.status().lastError()).isBlank();
+        }
+    }
+
+    @Test
+    void realtimeModeUsesFileEventsEvenWithLongScanInterval() throws Exception {
+        Path remote = temp.resolve("realtime-remote.git");
+        try (Git ignored = Git.init().setBare(true).setDirectory(remote.toFile()).call()) {
+            // Simulated GitHub remote.
+        }
+        Path work = temp.resolve("realtime-work");
+        try (Git git = Git.init().setInitialBranch("main").setDirectory(work.toFile()).call()) {
+            Files.writeString(work.resolve("base.txt"), "base");
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("initial")
+                    .setAuthor("Tester", "tester@example.com")
+                    .setCommitter("Tester", "tester@example.com")
+                    .call();
+            git.push().setRemote(remote.toUri().toString())
+                    .setRefSpecs(new RefSpec("refs/heads/main:refs/heads/main"))
+                    .call();
+        }
+        AppConfig config = new AppConfig();
+        config.repositoryPath = work.toString();
+        config.remoteUrl = remote.toUri().toString();
+        config.branch = "main";
+        config.privateKeyPath = "";
+        config.authorName = "Tester";
+        config.authorEmail = "tester@example.com";
+        config.syncMode = SyncMode.REALTIME;
+        config.debounceMillis = 500;
+        config.pollIntervalSeconds = 3_600;
+        Path configFile = temp.resolve("realtime-config.json");
+        new ConfigStore(configFile).save(config);
+
+        try (SyncController controller = new SyncController(
+                configFile, temp.resolve("realtime-state.json"),
+                temp.resolve("realtime-secret.bin"), temp.resolve("realtime-known_hosts"),
+                temp.resolve("realtime-backups"))) {
+            controller.start(config, new AppState());
+            Thread.sleep(500);
+            Files.writeString(work.resolve("realtime.txt"), "event");
+            await(Duration.ofSeconds(8), () ->
+                    "event".equals(remoteFile(remote, "realtime.txt")));
         }
     }
 
