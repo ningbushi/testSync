@@ -113,6 +113,7 @@ public final class MainWindow {
             selectedTaskId = tasks.get(0).taskId;
         }
         frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+        frame.setIconImage(AppIcon.image(64));
         frame.setMinimumSize(new Dimension(900, 600));
         frame.setSize(980, 660);
         frame.setLocationByPlatform(true);
@@ -165,7 +166,7 @@ public final class MainWindow {
                 trayPopupOwner.setVisible(false);
             }
         });
-        trayIcon = new TrayIcon(createTrayImage(), "SyncPlugins");
+        trayIcon = new TrayIcon(AppIcon.image(32), "SyncPlugins");
         trayIcon.setImageAutoSize(true);
         trayIcon.addMouseListener(new MouseAdapter() {
             @Override
@@ -512,18 +513,6 @@ public final class MainWindow {
         trayPopupOwner.setLocation(pointer);
         trayPopupOwner.setVisible(true);
         trayMenu.show(trayPopupOwner, 0, 0);
-    }
-
-    private static BufferedImage createTrayImage() {
-        BufferedImage image = new BufferedImage(32, 32, BufferedImage.TYPE_INT_ARGB);
-        var graphics = image.createGraphics();
-        graphics.setColor(new Color(39, 111, 185));
-        graphics.fillRoundRect(1, 1, 30, 30, 9, 9);
-        graphics.setColor(Color.WHITE);
-        graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 19));
-        graphics.drawString("S", 9, 23);
-        graphics.dispose();
-        return image;
     }
 
     private static final class TaskSnapshotRenderer extends DefaultListCellRenderer {
