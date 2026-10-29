@@ -19,6 +19,7 @@ public final class AppConfig {
     public boolean autoStart = true;
     public boolean startMinimized = true;
     public boolean paused = false;
+    public SyncMode syncMode = SyncMode.SCHEDULED;
     public long debounceMillis = 3_000;
     public long maxDebounceMillis = 30_000;
     public long pollIntervalSeconds = 30;
@@ -48,6 +49,7 @@ public final class AppConfig {
         copy.autoStart = autoStart;
         copy.startMinimized = startMinimized;
         copy.paused = paused;
+        copy.syncMode = syncMode;
         copy.debounceMillis = debounceMillis;
         copy.maxDebounceMillis = maxDebounceMillis;
         copy.pollIntervalSeconds = pollIntervalSeconds;
@@ -57,6 +59,9 @@ public final class AppConfig {
 
     public void validate() {
         Objects.requireNonNull(repositoryPath, "repositoryPath");
+        if (syncMode == null) {
+            syncMode = SyncMode.SCHEDULED;
+        }
         if (taskId != null && !taskId.isBlank()
                 && !taskId.matches("[a-zA-Z0-9_-]+")) {
             throw new IllegalArgumentException("任务 ID 包含无效字符");
