@@ -46,6 +46,14 @@ public record AppPaths(Path configDirectory, Path localDataDirectory) {
         return localDataDirectory.resolve("backups");
     }
 
+    public Path tasksDirectory() {
+        return configDirectory.resolve("tasks");
+    }
+
+    public Path statesDirectory() {
+        return localDataDirectory.resolve("states");
+    }
+
     public Path legacyLocalDataDirectory() {
         Path localRoot = localDataDirectory.getParent();
         return localRoot == null ? null : localRoot.resolve("SyncPlugins");
