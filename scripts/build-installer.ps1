@@ -38,7 +38,7 @@ try {
     }
     $commonArguments = @(
         "--name", "SyncPlugins",
-        "--app-version", "1.2.4",
+        "--app-version", "1.2.5",
         "--vendor", "SyncPlugins",
         "--description", "Automatic GitHub synchronization for a Git worktree",
         "--input", $inputDirectory,
