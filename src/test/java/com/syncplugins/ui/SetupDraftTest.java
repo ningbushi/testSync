@@ -34,6 +34,20 @@ class SetupDraftTest {
         assertThat(draft.syncMode).isEqualTo(SyncMode.REALTIME);
     }
 
+    @Test
+    void draftRoundTripPreservesScheduledInterval() {
+        AppConfig config = completeTask("interval-id");
+        config.pollIntervalSeconds = 420;
+        config.syncMode = SyncMode.SCHEDULED;
+
+        SetupDraft draft = SetupDraft.from(config);
+        AppConfig restored = new AppConfig();
+        draft.applyTo(restored);
+
+        assertThat(restored.pollIntervalSeconds).isEqualTo(420);
+        assertThat(restored.syncMode).isEqualTo(SyncMode.SCHEDULED);
+    }
+
     private static AppConfig completeTask(String taskId) {
         AppConfig config = new AppConfig();
         config.taskId = taskId;
