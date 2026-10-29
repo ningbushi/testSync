@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TaskRepositoryTest {
     @TempDir
@@ -46,6 +47,17 @@ class TaskRepositoryTest {
 
         assertThat(savedFirst.taskId).isNotEqualTo(savedSecond.taskId);
         assertThat(repository.loadAll()).hasSize(2);
+    }
+
+    @Test
+    void rejectsDuplicateLocalFolder() throws Exception {
+        TaskRepository repository = new TaskRepository(
+                temp.resolve("duplicate-tasks"), temp.resolve("missing.json"));
+        repository.saveNew(valid("first", "W:\\same-folder"));
+
+        assertThatThrownBy(() -> repository.saveNew(valid("second", "W:\\same-folder")))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("已被任务");
     }
 
     private static AppConfig valid(String name, String path) {
