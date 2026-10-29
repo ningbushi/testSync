@@ -3,6 +3,7 @@ package com.syncplugins.ui;
 import com.syncplugins.config.AppConfig;
 import com.syncplugins.config.InputMemory;
 import com.syncplugins.config.SetupDraft;
+import com.syncplugins.config.SyncMode;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,6 +31,7 @@ class SetupDraftTest {
 
         assertThat(draft.taskId).isEqualTo("existing-id");
         assertThat(draft.taskName).isEqualTo("Existing");
+        assertThat(draft.syncMode).isEqualTo(SyncMode.REALTIME);
     }
 
     private static AppConfig completeTask(String taskId) {
@@ -42,6 +44,7 @@ class SetupDraftTest {
         config.privateKeyPath = "W:\\key";
         config.authorName = "User";
         config.authorEmail = "user@example.com";
+        config.syncMode = SyncMode.REALTIME;
         return config;
     }
 }
