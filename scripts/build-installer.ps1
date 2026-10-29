@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
 try {
+    & (Join-Path $PSScriptRoot "generate-icon.ps1")
     & mvn clean verify
     if ($LASTEXITCODE -ne 0) {
         throw "Maven 构建或测试失败"
@@ -38,12 +39,13 @@ try {
     }
     $commonArguments = @(
         "--name", "SyncPlugins",
-        "--app-version", "1.2.7",
+        "--app-version", "1.2.8",
         "--vendor", "SyncPlugins",
         "--description", "Automatic GitHub synchronization for a Git worktree",
         "--input", $inputDirectory,
         "--main-jar", "syncplugins.jar",
         "--main-class", "com.syncplugins.Main",
+        "--icon", (Join-Path $projectRoot "src\main\resources\icons\app-icon.ico"),
         "--dest", $dist,
         "--java-options", "-Dfile.encoding=UTF-8",
         "--java-options", "-Dstdout.encoding=UTF-8",
