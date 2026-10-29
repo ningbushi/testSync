@@ -4,6 +4,7 @@ import com.syncplugins.config.AppConfig;
 import com.syncplugins.config.AppState;
 import com.syncplugins.config.ConfigStore;
 import com.syncplugins.config.StateStore;
+import com.syncplugins.config.SyncMode;
 import com.syncplugins.git.CloudSyncService;
 import com.syncplugins.git.DownloadResult;
 import com.syncplugins.git.GitRepositoryInspector;
@@ -15,6 +16,7 @@ import com.syncplugins.git.SyncOutcome;
 import com.syncplugins.security.KnownHostsStore;
 import com.syncplugins.security.SecretStore;
 import com.syncplugins.security.UnknownHostKeyException;
+import com.syncplugins.watch.RecursiveDirectoryWatcher;
 import com.syncplugins.workspace.BackupManager;
 import com.syncplugins.workspace.BackupRecord;
 
@@ -49,15 +51,19 @@ public final class SyncController implements AutoCloseable {
     private final List<Consumer<SyncStatus>> listeners = new CopyOnWriteArrayList<>();
     private final AtomicBoolean syncInFlight = new AtomicBoolean();
     private final AtomicBoolean remoteCheckInFlight = new AtomicBoolean();
+    private final Object debounceLock = new Object();
 
     private volatile AppConfig config;
     private volatile AppState state;
+    private volatile RecursiveDirectoryWatcher watcher;
+    private volatile ScheduledFuture<?> debounceFuture;
     private volatile ScheduledFuture<?> pollFuture;
     private volatile ScheduledFuture<?> networkRetryFuture;
     private volatile boolean halted;
     private volatile boolean rerunRequested;
     private volatile boolean shuttingDown;
     private volatile boolean remoteUpdateAvailable;
+    private volatile long lastMutationNanos;
     private volatile String message = "正在启动";
     private volatile String lastError = "";
     private volatile String currentFile = "";
@@ -89,6 +95,7 @@ public final class SyncController implements AutoCloseable {
         this.halted = config.paused;
         this.message = config.paused ? "同步已暂停" : "正在启动";
         if (!config.paused) {
+            installRealtimeWatcherIfNeeded();
             triggerDrain(false, Duration.ZERO);
         } else {
             publish();
@@ -109,6 +116,8 @@ public final class SyncController implements AutoCloseable {
             setError(SyncFailure.UNKNOWN, "无法保存配置：" + exception.getMessage());
             return;
         }
+        cancelWatcher();
+        cancelDebounce();
         cancelPeriodicTasks();
         queue.clear();
         this.config = updated.copy();
@@ -127,6 +136,7 @@ public final class SyncController implements AutoCloseable {
         this.message = config.paused ? "同步已暂停" : "配置已更新";
         schedulePolling();
         if (!config.paused) {
+            installRealtimeWatcherIfNeeded();
             triggerDrain(false, Duration.ZERO);
         } else {
             publish();
@@ -145,12 +155,15 @@ public final class SyncController implements AutoCloseable {
         config = updated;
         halted = paused;
         if (paused) {
+            cancelWatcher();
+            cancelDebounce();
             cancelPeriodicTasks();
             message = "同步已暂停";
             publish();
         } else {
             message = "正在恢复同步";
             schedulePolling();
+            installRealtimeWatcherIfNeeded();
             triggerDrain(false, Duration.ZERO);
         }
     }
@@ -270,7 +283,9 @@ public final class SyncController implements AutoCloseable {
         AppConfig current = config;
         AppState currentState = state;
         return new SyncStatus(
-                current != null && !halted && !current.paused,
+                current != null && !halted && !current.paused
+                        && (current.syncMode == SyncMode.SCHEDULED
+                        ? pollFuture != null : watcher != null),
                 current == null || current.paused,
                 syncInFlight.get(),
                 currentState != null && currentState.pendingPush,
@@ -461,6 +476,61 @@ public final class SyncController implements AutoCloseable {
         queue.merge(inspector.listPendingChanges(config.repositoryPath));
     }
 
+    private void onDirectoryChanged() {
+        synchronized (debounceLock) {
+            if (halted || config == null || config.paused || shuttingDown) {
+                return;
+            }
+            if (syncInFlight.get()) {
+                rerunRequested = true;
+                return;
+            }
+            lastMutationNanos = System.nanoTime();
+            scheduleDebounceTick();
+        }
+    }
+
+    private void scheduleDebounceTick() {
+        if (debounceFuture != null && !debounceFuture.isDone()) {
+            return;
+        }
+        debounceFuture = scheduler.schedule(this::debounceTick,
+                Math.max(100, config.debounceMillis / 2), TimeUnit.MILLISECONDS);
+    }
+
+    private void debounceTick() {
+        synchronized (debounceLock) {
+            if (halted || config == null || config.paused || shuttingDown) {
+                return;
+            }
+            long quietNanos = System.nanoTime() - lastMutationNanos;
+            long quietLimit = TimeUnit.MILLISECONDS.toNanos(config.debounceMillis);
+            if (quietNanos < quietLimit) {
+                debounceFuture = scheduler.schedule(this::debounceTick,
+                        Math.max(100, TimeUnit.NANOSECONDS.toMillis(quietLimit - quietNanos)),
+                        TimeUnit.MILLISECONDS);
+                return;
+            }
+            lastMutationNanos = 0;
+            triggerDrain(false, Duration.ZERO);
+        }
+    }
+
+    private void installRealtimeWatcherIfNeeded() {
+        if (watcher != null || config == null || config.syncMode != SyncMode.REALTIME) {
+            return;
+        }
+        try {
+            RecursiveDirectoryWatcher newWatcher = new RecursiveDirectoryWatcher(
+                    Path.of(config.repositoryPath), this::onDirectoryChanged);
+            newWatcher.start();
+            watcher = newWatcher;
+        } catch (IOException exception) {
+            setError(SyncFailure.WORKTREE,
+                    "无法启动实时监控，请改用定时扫描：" + exception.getMessage());
+        }
+    }
+
     private void schedulePolling() {
         if (config == null) {
             return;
@@ -551,8 +621,25 @@ public final class SyncController implements AutoCloseable {
 
     private void halt() {
         halted = true;
+        cancelWatcher();
         message = "自动同步已暂停，请处理后继续";
         publish();
+    }
+
+    private void cancelWatcher() {
+        RecursiveDirectoryWatcher current = watcher;
+        watcher = null;
+        if (current != null) {
+            current.close();
+        }
+    }
+
+    private void cancelDebounce() {
+        ScheduledFuture<?> current = debounceFuture;
+        debounceFuture = null;
+        if (current != null) {
+            current.cancel(false);
+        }
     }
 
     private void cancelPeriodicTasks() {
@@ -593,6 +680,8 @@ public final class SyncController implements AutoCloseable {
     @Override
     public void close() {
         shuttingDown = true;
+        cancelWatcher();
+        cancelDebounce();
         cancelPeriodicTasks();
         cancelNetworkRetry();
         scheduler.shutdownNow();
