@@ -452,59 +452,6 @@ public final class SyncController implements AutoCloseable {
         queue.merge(inspector.listPendingChanges(config.repositoryPath));
     }
 
-    private void onDirectoryChanged() {
-        synchronized (debounceLock) {
-            if (halted || config == null || config.paused || shuttingDown || syncInFlight.get()) {
-                if (syncInFlight.get()) {
-                    rerunRequested = true;
-                }
-                return;
-            }
-            lastMutationNanos = System.nanoTime();
-            scheduleDebounceTick();
-        }
-    }
-
-    private void scheduleDebounceTick() {
-        if (debounceFuture != null && !debounceFuture.isDone()) {
-            return;
-        }
-        debounceFuture = scheduler.schedule(this::debounceTick,
-                Math.max(100, config.debounceMillis / 2), TimeUnit.MILLISECONDS);
-    }
-
-    private void debounceTick() {
-        synchronized (debounceLock) {
-            if (halted || config == null || config.paused || shuttingDown) {
-                return;
-            }
-            long quietNanos = System.nanoTime() - lastMutationNanos;
-            long quietLimit = TimeUnit.MILLISECONDS.toNanos(config.debounceMillis);
-            if (quietNanos < quietLimit) {
-                debounceFuture = scheduler.schedule(this::debounceTick,
-                        Math.max(100, TimeUnit.NANOSECONDS.toMillis(quietLimit - quietNanos)),
-                        TimeUnit.MILLISECONDS);
-                return;
-            }
-            lastMutationNanos = 0;
-            triggerDrain(false, Duration.ZERO);
-        }
-    }
-
-    private void installWatcher() {
-        if (watcher != null || config == null) {
-            return;
-        }
-        try {
-            RecursiveDirectoryWatcher newWatcher = new RecursiveDirectoryWatcher(
-                    Path.of(config.repositoryPath), this::onDirectoryChanged);
-            newWatcher.start();
-            watcher = newWatcher;
-        } catch (IOException exception) {
-            setError(SyncFailure.WORKTREE, "无法监听仓库目录：" + exception.getMessage());
-        }
-    }
-
     private void schedulePolling() {
         if (config == null) {
             return;
@@ -595,17 +542,8 @@ public final class SyncController implements AutoCloseable {
 
     private void halt() {
         halted = true;
-        cancelWatcher();
         message = "自动同步已暂停，请处理后继续";
         publish();
-    }
-
-    private void cancelWatcher() {
-        RecursiveDirectoryWatcher current = watcher;
-        watcher = null;
-        if (current != null) {
-            current.close();
-        }
     }
 
     private void cancelPeriodicTasks() {
@@ -646,7 +584,6 @@ public final class SyncController implements AutoCloseable {
     @Override
     public void close() {
         shuttingDown = true;
-        cancelWatcher();
         cancelPeriodicTasks();
         cancelNetworkRetry();
         scheduler.shutdownNow();
