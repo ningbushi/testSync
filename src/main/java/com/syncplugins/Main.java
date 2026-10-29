@@ -2,14 +2,13 @@ package com.syncplugins;
 
 import com.formdev.flatlaf.FlatLightLaf;
 import com.syncplugins.config.AppConfig;
-import com.syncplugins.config.AppState;
-import com.syncplugins.config.ConfigStore;
 import com.syncplugins.config.InputMemory;
 import com.syncplugins.config.InputMemoryStore;
-import com.syncplugins.config.StateStore;
 import com.syncplugins.config.SetupDraft;
+import com.syncplugins.config.TaskRepository;
+import com.syncplugins.security.KnownHostsStore;
 import com.syncplugins.security.SecretStore;
-import com.syncplugins.sync.SyncController;
+import com.syncplugins.sync.MultiTaskController;
 import com.syncplugins.system.AutoStartManager;
 import com.syncplugins.system.SingleInstanceLock;
 import com.syncplugins.ui.MainWindow;
@@ -31,6 +30,7 @@ import java.awt.GraphicsEnvironment;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -54,9 +54,11 @@ public final class Main {
             migrateLocalData(paths);
             Files.createDirectories(paths.configDirectory());
             Files.createDirectories(paths.localDataDirectory());
+            Files.createDirectories(paths.tasksDirectory());
+            Files.createDirectories(paths.statesDirectory());
             AppLogging.configure(paths.logFile());
         } catch (IOException exception) {
-            System.err.println("无法初始化日志：" + exception.getMessage());
+            System.err.println("无法初始化运行目录：" + exception.getMessage());
         }
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             LOGGER.log(Level.SEVERE, "未捕获异常", throwable);
@@ -65,7 +67,6 @@ public final class Main {
                             + "\n日志：" + paths.logFile(),
                     "SyncPlugins", JOptionPane.ERROR_MESSAGE));
         });
-
         SwingUtilities.invokeLater(() -> startApplication(paths, args));
     }
 
@@ -89,44 +90,41 @@ public final class Main {
             return;
         }
 
-        ConfigStore configStore = new ConfigStore(paths.configFile());
-        StateStore stateStore = new StateStore(paths.stateFile());
-        SecretStore secretStore = new SecretStore(paths.secretFile());
+        TaskRepository taskRepository = new TaskRepository(
+                paths.tasksDirectory(), paths.configFile());
         InputMemoryStore memoryStore = new InputMemoryStore(paths.uiStateFile());
+        SecretStore secretStore = new SecretStore(paths.secretFile());
+        KnownHostsStore knownHosts = new KnownHostsStore(paths.knownHostsFile());
+        WorkspaceBootstrapService workspaceService = new WorkspaceBootstrapService(
+                knownHosts, new BackupManager(paths.backupsDirectory()));
         InputMemory inputMemory;
-        AppConfig config;
-        AppState state;
+        List<AppConfig> tasks;
         try {
-            config = configStore.load();
-            state = stateStore.load();
             inputMemory = memoryStore.load();
+            tasks = new ArrayList<>(taskRepository.loadAll());
+            taskRepository.saveAll(tasks);
         } catch (Exception exception) {
-            LOGGER.log(Level.SEVERE, "加载配置失败", exception);
-            JOptionPane.showMessageDialog(null,
-                    exception.getMessage() + "\n\n配置文件：" + paths.configFile(),
+            LOGGER.log(Level.SEVERE, "加载任务失败", exception);
+            JOptionPane.showMessageDialog(null, exception.getMessage(),
                     "无法加载 SyncPlugins", JOptionPane.ERROR_MESSAGE);
             closeQuietly(instanceLock);
             return;
         }
 
-        if (!config.isComplete()) {
-            WorkspaceBootstrapService workspaceService = new WorkspaceBootstrapService(
-                    new com.syncplugins.security.KnownHostsStore(paths.knownHostsFile()),
-                    new BackupManager(paths.backupsDirectory()));
-            SetupDialog setup = new SetupDialog(null, config, memoryStore, secretStore,
-                    new com.syncplugins.security.KnownHostsStore(paths.knownHostsFile()),
-                    workspaceService);
+        if (tasks.isEmpty()) {
+            SetupDialog setup = new SetupDialog(null, new AppConfig(), memoryStore,
+                    secretStore, knownHosts, workspaceService);
             SetupResult result = setup.showDialog();
             if (result == null) {
                 closeQuietly(instanceLock);
                 return;
             }
             try {
-                persistSettings(secretStore, result.config(), result.passphrase());
-                configStore.save(result.config());
-                config = result.config();
+                AppConfig saved = taskRepository.saveNew(result.config());
+                secretStore.savePassphrase(saved.privateKeyPath, result.passphrase());
+                tasks.add(saved);
             } catch (Exception exception) {
-                JOptionPane.showMessageDialog(null, "无法保存设置：" + exception.getMessage(),
+                JOptionPane.showMessageDialog(null, "无法保存任务：" + exception.getMessage(),
                         "SyncPlugins", JOptionPane.ERROR_MESSAGE);
                 closeQuietly(instanceLock);
                 return;
@@ -135,21 +133,44 @@ public final class Main {
             }
         }
 
-        if (config.isComplete()) {
-            if (!inputMemory.draftPending) {
-                memoryStore.remember(inputMemory, SetupDraft.from(config));
-                try {
-                    memoryStore.save(inputMemory);
-                } catch (IOException exception) {
-                    LOGGER.log(Level.WARNING, "无法保存最近输入", exception);
-                }
+        if (!inputMemory.draftPending && !tasks.isEmpty()) {
+            memoryStore.remember(inputMemory, SetupDraft.from(tasks.get(0)));
+            try {
+                memoryStore.save(inputMemory);
+            } catch (IOException exception) {
+                LOGGER.log(Level.WARNING, "无法保存最近输入", exception);
             }
         }
+        applyAutoStart(tasks.stream().anyMatch(task -> task.autoStart));
 
-        SyncController controller = new SyncController(
-                paths.configFile(), paths.stateFile(), paths.secretFile(), paths.knownHostsFile(),
-                paths.backupsDirectory());
-        controller.start(config, state);
+        MultiTaskController controller = new MultiTaskController(
+                paths.tasksDirectory(), paths.statesDirectory(), paths.secretFile(),
+                paths.knownHostsFile(), paths.backupsDirectory());
+        controller.start(tasks);
+
+        java.util.function.Function<SetupResult, AppConfig> saveTask = result -> {
+            try {
+                AppConfig saved = result.config().taskId == null || result.config().taskId.isBlank()
+                        ? taskRepository.saveNew(result.config())
+                        : taskRepository.save(result.config());
+                secretStore.savePassphrase(saved.privateKeyPath, result.passphrase());
+                controller.addOrUpdate(saved, true);
+                List<AppConfig> current = controller.snapshots().stream()
+                        .map(snapshot -> snapshot.config()).toList();
+                applyAutoStart(current.stream().anyMatch(task -> task.autoStart));
+                return saved;
+            } catch (Exception exception) {
+                throw new IllegalStateException("无法保存任务：" + exception.getMessage(), exception);
+            }
+        };
+        java.util.function.Consumer<String> deleteTask = taskId -> {
+            try {
+                controller.removeTask(taskId);
+                taskRepository.delete(taskId);
+            } catch (IOException exception) {
+                throw new IllegalStateException("无法删除任务：" + exception.getMessage(), exception);
+            }
+        };
 
         AtomicReference<MainWindow> windowReference = new AtomicReference<>();
         AtomicBoolean exiting = new AtomicBoolean();
@@ -158,19 +179,8 @@ public final class Main {
                 performExit(controller, windowReference.get(), instanceLock);
             }
         };
-        java.util.function.Consumer<SetupResult> saveSettings = result -> {
-            try {
-                persistSettings(secretStore, result.config(), result.passphrase());
-                configStore.save(result.config());
-            } catch (Exception exception) {
-                throw new IllegalStateException("无法保存设置：" + exception.getMessage(), exception);
-            }
-        };
-        WorkspaceBootstrapService workspaceService = new WorkspaceBootstrapService(
-                new com.syncplugins.security.KnownHostsStore(paths.knownHostsFile()),
-                new BackupManager(paths.backupsDirectory()));
-        MainWindow window = new MainWindow(controller, config, saveSettings, exitAction,
-                memoryStore, secretStore, workspaceService);
+        MainWindow window = new MainWindow(controller, tasks, taskRepository,
+                saveTask, deleteTask, exitAction, memoryStore, secretStore, workspaceService);
         windowReference.set(window);
         window.installTray();
 
@@ -180,30 +190,24 @@ public final class Main {
         }
     }
 
-    private static void persistSettings(SecretStore secretStore, AppConfig config, char[] passphrase)
-            throws IOException {
-        secretStore.savePassphrase(config.privateKeyPath, passphrase);
-        if (config.autoStart) {
-            AutoStartManager manager = new AutoStartManager();
-            if (!manager.setEnabled(true)) {
-                LOGGER.warning("当前运行方式不支持开机自启；安装版会启用该功能");
-            }
-        } else {
-            new AutoStartManager().setEnabled(false);
+    private static void applyAutoStart(boolean enabled) {
+        try {
+            new AutoStartManager().setEnabled(enabled);
+        } catch (IOException exception) {
+            LOGGER.log(Level.WARNING, "无法更新开机启动设置", exception);
         }
     }
 
-    private static void performExit(SyncController controller, MainWindow window,
+    private static void performExit(MultiTaskController controller, MainWindow window,
                                     SingleInstanceLock lock) {
         JDialog progress = new JDialog(window == null ? null : window.frame(),
                 "正在退出 SyncPlugins", true);
         progress.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         JPanel panel = new JPanel(new BorderLayout(0, 12));
         panel.setBorder(javax.swing.BorderFactory.createEmptyBorder(20, 24, 20, 24));
-        JLabel text = new JLabel("正在尝试完成最后一次同步...");
+        panel.add(new JLabel("正在尝试完成全部任务的最后一次同步..."), BorderLayout.NORTH);
         JProgressBar bar = new JProgressBar();
         bar.setIndeterminate(true);
-        panel.add(text, BorderLayout.NORTH);
         panel.add(bar, BorderLayout.CENTER);
         progress.add(panel);
         progress.pack();
@@ -228,14 +232,6 @@ public final class Main {
         progress.setVisible(true);
     }
 
-    private static void closeQuietly(SingleInstanceLock lock) {
-        try {
-            lock.close();
-        } catch (IOException ignored) {
-            // Process exit also releases the lock.
-        }
-    }
-
     private static void migrateLocalData(AppPaths paths) throws IOException {
         Path legacy = paths.legacyLocalDataDirectory();
         if (legacy == null || legacy.equals(paths.localDataDirectory()) || !Files.isDirectory(legacy)) {
@@ -251,9 +247,8 @@ public final class Main {
             }
         }
         Path legacyBackups = legacy.resolve("backups");
-        Path targetBackups = paths.backupsDirectory();
-        if (Files.isDirectory(legacyBackups) && !Files.exists(targetBackups)) {
-            copyTree(legacyBackups, targetBackups);
+        if (Files.isDirectory(legacyBackups) && !Files.exists(paths.backupsDirectory())) {
+            copyTree(legacyBackups, paths.backupsDirectory());
         }
     }
 
@@ -277,5 +272,13 @@ public final class Main {
                 return java.nio.file.FileVisitResult.CONTINUE;
             }
         });
+    }
+
+    private static void closeQuietly(SingleInstanceLock lock) {
+        try {
+            lock.close();
+        } catch (IOException ignored) {
+            // Process exit also releases the lock.
+        }
     }
 }
