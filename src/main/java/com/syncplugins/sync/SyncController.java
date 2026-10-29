@@ -15,7 +15,6 @@ import com.syncplugins.git.SyncOutcome;
 import com.syncplugins.security.KnownHostsStore;
 import com.syncplugins.security.SecretStore;
 import com.syncplugins.security.UnknownHostKeyException;
-import com.syncplugins.watch.RecursiveDirectoryWatcher;
 import com.syncplugins.workspace.BackupManager;
 import com.syncplugins.workspace.BackupRecord;
 
@@ -50,19 +49,15 @@ public final class SyncController implements AutoCloseable {
     private final List<Consumer<SyncStatus>> listeners = new CopyOnWriteArrayList<>();
     private final AtomicBoolean syncInFlight = new AtomicBoolean();
     private final AtomicBoolean remoteCheckInFlight = new AtomicBoolean();
-    private final Object debounceLock = new Object();
 
     private volatile AppConfig config;
     private volatile AppState state;
-    private volatile RecursiveDirectoryWatcher watcher;
-    private volatile ScheduledFuture<?> debounceFuture;
     private volatile ScheduledFuture<?> pollFuture;
     private volatile ScheduledFuture<?> networkRetryFuture;
     private volatile boolean halted;
     private volatile boolean rerunRequested;
     private volatile boolean shuttingDown;
     private volatile boolean remoteUpdateAvailable;
-    private volatile long lastMutationNanos;
     private volatile String message = "正在启动";
     private volatile String lastError = "";
     private volatile String currentFile = "";
@@ -94,7 +89,6 @@ public final class SyncController implements AutoCloseable {
         this.halted = config.paused;
         this.message = config.paused ? "同步已暂停" : "正在启动";
         if (!config.paused) {
-            installWatcher();
             triggerDrain(false, Duration.ZERO);
         } else {
             publish();
@@ -115,7 +109,6 @@ public final class SyncController implements AutoCloseable {
             setError(SyncFailure.UNKNOWN, "无法保存配置：" + exception.getMessage());
             return;
         }
-        cancelWatcher();
         cancelPeriodicTasks();
         queue.clear();
         this.config = updated.copy();
@@ -134,7 +127,6 @@ public final class SyncController implements AutoCloseable {
         this.message = config.paused ? "同步已暂停" : "配置已更新";
         schedulePolling();
         if (!config.paused) {
-            installWatcher();
             triggerDrain(false, Duration.ZERO);
         } else {
             publish();
@@ -153,13 +145,12 @@ public final class SyncController implements AutoCloseable {
         config = updated;
         halted = paused;
         if (paused) {
-            cancelWatcher();
+            cancelPeriodicTasks();
             message = "同步已暂停";
             publish();
         } else {
             message = "正在恢复同步";
             schedulePolling();
-            installWatcher();
             triggerDrain(false, Duration.ZERO);
         }
     }
@@ -279,7 +270,7 @@ public final class SyncController implements AutoCloseable {
         AppConfig current = config;
         AppState currentState = state;
         return new SyncStatus(
-                watcher != null && !halted,
+                current != null && !halted && !current.paused,
                 current == null || current.paused,
                 syncInFlight.get(),
                 currentState != null && currentState.pendingPush,
