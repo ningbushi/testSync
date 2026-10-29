@@ -1,6 +1,6 @@
 package com.syncplugins.ui;
 
-import com.syncplugins.sync.SyncController;
+import com.syncplugins.sync.MultiTaskController;
 import com.syncplugins.workspace.BackupRecord;
 
 import javax.swing.BorderFactory;
@@ -27,14 +27,16 @@ import java.util.concurrent.CompletableFuture;
 final class BackupDialog extends JDialog {
     private static final DateTimeFormatter TIME = DateTimeFormatter
             .ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
-    private final SyncController controller;
+    private final MultiTaskController controller;
+    private final String taskId;
     private final DefaultListModel<BackupRecord> model = new DefaultListModel<>();
     private final JList<BackupRecord> list = new JList<>(model);
     private final JLabel status = new JLabel(" ");
 
-    BackupDialog(java.awt.Frame owner, SyncController controller) {
+    BackupDialog(java.awt.Frame owner, MultiTaskController controller, String taskId) {
         super(owner, "下载前备份", true);
         this.controller = controller;
+        this.taskId = taskId;
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(0, 12));
         setMinimumSize(new Dimension(620, 380));
@@ -67,7 +69,7 @@ final class BackupDialog extends JDialog {
 
     private void reload() {
         model.clear();
-        List<BackupRecord> records = controller.backups();
+        List<BackupRecord> records = controller.backups(taskId);
         records.forEach(model::addElement);
         status.setText(records.isEmpty() ? "暂无备份" : "共 " + records.size() + " 份备份");
         status.setForeground(records.isEmpty() ? new Color(110, 116, 126) : new Color(40, 100, 60));
@@ -86,7 +88,7 @@ final class BackupDialog extends JDialog {
             return;
         }
         status.setText("正在恢复...");
-        CompletableFuture<Void> future = controller.restoreBackup(record);
+        CompletableFuture<Void> future = controller.restoreBackup(taskId, record);
         future.whenComplete((ignored, error) -> javax.swing.SwingUtilities.invokeLater(() -> {
             if (error != null) {
                 JOptionPane.showMessageDialog(this, error.getMessage(),
@@ -104,7 +106,7 @@ final class BackupDialog extends JDialog {
             JOptionPane.showMessageDialog(this, "请先选择一份备份");
             return;
         }
-        controller.deleteBackup(record);
+        controller.deleteBackup(taskId, record);
         reload();
     }
 
